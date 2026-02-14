@@ -1,0 +1,100 @@
+# TEBO_ELENCO_ARTICOLI.xls
+- Codice
+- Descrizione
+- UM
+- Peso lordo
+- Peso  netto    
+- Numero pezzi
+- Dimensione1
+- Dimensione2
+- Dimensione3
+- Cod IVA Vendite
+- Cod Contropartita
+- Cod IVA Acq
+- Conto Acq
+- Cod Fornitore
+- Giorni riordino
+- Cod Blocco
+- Descrizione Blocco
+
+# TEBO_ELENCO_CLIENTI.xls
+- Codice
+- CLI codice alternativo
+- Descrizione
+- Indirizzo 
+- Cap
+- Città
+- PR
+- Nazione
+-  P. IVA
+- C. fiscale
+- Telefono
+- E-mail
+- Cellulare Fornitore
+- Telefono2
+- Codice Pagamento
+- Descrizione Pagamento
+- Banca
+- Filiale
+- ABI
+- CIN
+- c/c
+- IBAN
+- BIC
+- Internet
+- Commento
+- Riferimento
+- Zona
+- Area    
+- CategoriCategoria
+- Statistico
+- Agente
+- Listino 
+
+# TEBO_ELENCO_DETTAGLIO_RIGHE_VENDITA.xls
+- Progressivo
+- Codice Cli
+- Descrizione cliente
+- Città
+- Tipo Documento
+- Desc. Causale
+- Data Doc
+- Nr Doc
+- Data Fat
+- Nr Fat
+- Riferimento
+- Riga
+- Codice Art
+- Descrizione articolo
+- U.m.
+- Quantità
+- Prezzo  unitario
+- Importo sconto
+- Importo_netto
+
+# TEBO_ELENCO_FORNITORI.xls
+- Codice
+- Ragione sociale
+- Indirizzo Esteso
+- Indirizzo
+- CAP
+- Città
+- PR
+- Codice nazione
+- C. fisc.
+- P. IVA 
+- IVA Intra
+- Codice Pagmento
+- Descrizione Pagamento
+- Tel.
+- Fax 
+- Unnamed: 15
+- Banca
+- Filiale
+- ABI
+- CAB
+- C/C
+- IBAN
+- Porto
+- Spedizione
+

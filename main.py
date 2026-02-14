@@ -1,0 +1,1680 @@
+from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
+                             QHBoxLayout, QPushButton, QLabel, QTableWidget, 
+                             QTableWidgetItem, QHeaderView, QLineEdit, QFrame, 
+                             QMessageBox, QStackedWidget, QGridLayout, QComboBox,
+                             QFormLayout, QGroupBox, QStatusBar, QDialog, QFileDialog,
+                             QDateEdit)
+from PySide6.QtCore import Qt, QSize, QDate, QUrl
+from PySide6.QtGui import QFont, QAction, QColor, QPixmap, QIcon, QDesktopServices
+from database import DatabaseManager, Cliente, Fornitore, Articolo, Fattura, RigaFattura
+from data_manager import DataManager
+import sys
+import os
+import json
+import base64
+import subprocess
+import winreg
+from io import BytesIO
+
+# Path for column preferences file
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+COLUMN_PREFS_FILE = os.path.join(BASE_DIR, "column_prefs.json")
+
+
+def load_column_prefs():
+    """Load column visibility preferences from JSON file."""
+    if os.path.exists(COLUMN_PREFS_FILE):
+        try:
+            with open(COLUMN_PREFS_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except:
+            pass
+    return {}
+
+
+def save_column_prefs(prefs):
+    """Save column visibility preferences to JSON file."""
+    with open(COLUMN_PREFS_FILE, 'w', encoding='utf-8') as f:
+        json.dump(prefs, f, indent=2, ensure_ascii=False)
+
+
+class ColumnConfigDialog(QDialog):
+    """Dialog to choose which columns are visible in a table."""
+    def __init__(self, columns, visible_columns, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Configura Colonne")
+        self.setMinimumWidth(300)
+        self.columns = columns
+        self.checkboxes = []
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel("Seleziona le colonne da visualizzare:"))
+
+        from PySide6.QtWidgets import QCheckBox
+        for col in columns:
+            cb = QCheckBox(col)
+            cb.setChecked(col in visible_columns)
+            self.checkboxes.append(cb)
+            layout.addWidget(cb)
+
+        # Buttons
+        btn_layout = QHBoxLayout()
+        btn_all = QPushButton("Seleziona Tutte")
+        btn_none = QPushButton("Deseleziona Tutte")
+        btn_ok = QPushButton("OK")
+        btn_ok.setStyleSheet("background-color: #00bcd4; color: #000; font-weight: bold;")
+
+        btn_all.clicked.connect(lambda: [cb.setChecked(True) for cb in self.checkboxes])
+        btn_none.clicked.connect(lambda: [cb.setChecked(False) for cb in self.checkboxes])
+        btn_ok.clicked.connect(self.accept)
+
+        btn_layout.addWidget(btn_all)
+        btn_layout.addWidget(btn_none)
+        btn_layout.addStretch()
+        btn_layout.addWidget(btn_ok)
+        layout.addLayout(btn_layout)
+
+    def get_visible_columns(self):
+        return [col for col, cb in zip(self.columns, self.checkboxes) if cb.isChecked()]
+
+
+class SortableItem(QTableWidgetItem):
+    """Custom QTableWidgetItem that sorts by a raw value stored in UserRole+1.
+    Supports numeric, date, and text sorting transparently."""
+    def __lt__(self, other):
+        raw_self = self.data(Qt.UserRole + 1)
+        raw_other = other.data(Qt.UserRole + 1) if other else None
+        # If both have raw values, compare them directly
+        if raw_self is not None and raw_other is not None:
+            try:
+                return raw_self < raw_other
+            except TypeError:
+                return str(raw_self) < str(raw_other)
+        # Fallback to text comparison
+        return (self.text() or "") < (other.text() or "")
+
+
+def make_item(display_text, raw_value=None, user_role_data=None):
+    """Create a SortableItem with display text and optional raw sort value."""
+    item = SortableItem(str(display_text) if display_text else "")
+    if raw_value is not None:
+        item.setData(Qt.UserRole + 1, raw_value)
+    else:
+        # Try to infer a numeric value from the display text for sorting
+        item.setData(Qt.UserRole + 1, display_text)
+    if user_role_data is not None:
+        item.setData(Qt.UserRole, user_role_data)
+    return item
+
+
+class InvoiceDialog(QDialog):
+    """Summary dialog for an invoice."""
+    DETAIL_HEADERS = ["UM", "Codice", "Descrizione", "Quantità", "Prezzo Unit.", "Totale Riga"]
+    PREFS_KEY = "invoice_detail_widths"
+
+    def __init__(self, fattura, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"Fattura n. {fattura.numero} del {fattura.data}")
+        self.resize(900, 600)
+        self.fattura = fattura
+        self.setup_ui()
+
+    def setup_ui(self):
+        layout = QVBoxLayout(self)
+
+        # Header Details
+        info_group = QGroupBox("Dati Fattura")
+        info_layout = QFormLayout(info_group)
+        info_layout.addRow("Numero:", QLabel(str(self.fattura.numero)))
+        info_layout.addRow("Data:", QLabel(str(self.fattura.data)))
+        
+        # Cliente
+        cliente_str = self.fattura.cliente_denominazione or self.fattura.cliente_codice or "-"
+        info_layout.addRow("Cliente:", QLabel(cliente_str))
+        info_layout.addRow("Causale:", QLabel(self.fattura.causale or "-"))
+        
+        layout.addWidget(info_group)
+
+        # Rows Table
+        self.table = QTableWidget()
+        self.table.setColumnCount(len(self.DETAIL_HEADERS))
+        self.table.setHorizontalHeaderLabels(self.DETAIL_HEADERS)
+        # Allow manual resizing - Interactive mode instead of ResizeToContents
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.setSortingEnabled(True)
+        self.load_rows()
+        self._restore_column_widths()
+        layout.addWidget(self.table)
+
+        # Footer Total
+        footer_layout = QHBoxLayout()
+        footer_layout.addStretch()
+        lbl_tot = QLabel(f"TOTALE FATTURA: € {self.fattura.totale:.2f}")
+        lbl_tot.setStyleSheet("font-size: 18px; font-weight: bold; color: #00bcd4;")
+        footer_layout.addWidget(lbl_tot)
+        
+        # Action Buttons
+        btn_layout = QHBoxLayout()
+        btn_client = QPushButton("👤 Vedi Cliente")
+        btn_client.clicked.connect(self.jump_to_client)
+        btn_layout.addWidget(btn_client)
+        btn_layout.addStretch()
+        
+        layout.addLayout(footer_layout)
+        layout.addLayout(btn_layout)
+
+    def jump_to_client(self):
+        # Access MainWindow's method through parent
+        main_win = self.parent()
+        while main_win and not hasattr(main_win, 'open_client_by_code'):
+            main_win = main_win.parent()
+        
+        if main_win:
+            # Pass both code and denomination for robust search
+            main_win.open_client_by_code(
+                self.fattura.cliente_codice, 
+                self.fattura.cliente_denominazione
+            )
+
+    def load_rows(self):
+        righe = self.fattura.righe
+        self.table.setRowCount(len(righe))
+        for i, r in enumerate(righe):
+            # Get UM safely from the related Articolo, if it exists
+            um_val = ""
+            if r.articolo and r.articolo.um:
+                um_val = r.articolo.um
+            self.table.setItem(i, 0, QTableWidgetItem(um_val))
+            self.table.setItem(i, 1, QTableWidgetItem(r.articolo_codice or ""))
+            self.table.setItem(i, 2, QTableWidgetItem(r.descrizione or ""))
+            self.table.setItem(i, 3, QTableWidgetItem(f"{r.quantita:.2f}" if r.quantita else "0.00"))
+            self.table.setItem(i, 4, QTableWidgetItem(f"€ {r.prezzo_unitario:.2f}" if r.prezzo_unitario else "€ 0.00"))
+            self.table.setItem(i, 5, QTableWidgetItem(f"€ {r.totale_riga:.2f}" if r.totale_riga else "€ 0.00"))
+
+    def _restore_column_widths(self):
+        """Restore saved column widths from preferences."""
+        prefs = load_column_prefs()
+        widths = prefs.get(self.PREFS_KEY)
+        if widths and len(widths) == self.table.columnCount():
+            for i, w in enumerate(widths):
+                self.table.setColumnWidth(i, w)
+        else:
+            # Default reasonable widths
+            defaults = [60, 120, 250, 80, 100, 100]
+            for i, w in enumerate(defaults[:self.table.columnCount()]):
+                self.table.setColumnWidth(i, w)
+
+    def _save_column_widths(self):
+        """Save current column widths to preferences."""
+        prefs = load_column_prefs()
+        widths = [self.table.columnWidth(i) for i in range(self.table.columnCount())]
+        prefs[self.PREFS_KEY] = widths
+        save_column_prefs(prefs)
+
+    def closeEvent(self, event):
+        """Save column widths when dialog is closed and notify parent."""
+        self._save_column_widths()
+        if hasattr(self, 'window_id'):
+            main_win = self.parent()
+            while main_win and not hasattr(main_win, 'remove_detail_window'):
+                main_win = main_win.parent()
+            if main_win:
+                main_win.remove_detail_window(self.window_id)
+        super().closeEvent(event)
+
+
+def get_icon(name):
+    """Returns a QIcon from an SVG string for consistent rendering."""
+    svgs = {
+        "email": """<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#00bcd4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg>""",
+        "web": """<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#00bcd4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>""",
+        "map": """<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#00bcd4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>"""
+    }
+    if name not in svgs: return QIcon()
+    
+    # Render SVG to pixmap
+    from PySide6.QtGui import QPixmap, QPainter
+    from PySide6.QtSvg import QSvgRenderer
+    
+    renderer = QSvgRenderer(svgs[name].encode('utf-8'))
+    pixmap = QPixmap(32, 32)
+    pixmap.fill(Qt.transparent)
+    painter = QPainter(pixmap)
+    renderer.render(painter)
+    painter.end()
+    
+    return QIcon(pixmap)
+
+
+class MailSelectorDialog(QDialog):
+    """Dialog to choose how to send an email, detecting installed apps."""
+    def __init__(self, email, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Invia Email")
+        self.email = email
+        self.setFixedWidth(450)
+        self.setMinimumHeight(600)
+        self.setup_ui()
+
+    def get_installed_mail_apps(self):
+        """Scans Windows registry for installed mail clients."""
+        apps = []
+        try:
+            key_path = r"SOFTWARE\Clients\Mail"
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key_path) as key:
+                for i in range(winreg.QueryInfoKey(key)[0]):
+                    try:
+                        subkey_name = winreg.EnumKey(key, i)
+                        with winreg.OpenKey(key, subkey_name) as subkey:
+                            # Try to get the friendly name or use the key name
+                            try:
+                                app_name = winreg.QueryValue(subkey, None)
+                            except:
+                                app_name = subkey_name
+                            
+                            # Get the command to open
+                            try:
+                                cmd_path = r"shell\open\command"
+                                with winreg.OpenKey(subkey, cmd_path) as cmd_key:
+                                    command = winreg.QueryValue(cmd_key, None)
+                                    if command:
+                                        # Clean up command (remove quotes, etc.)
+                                        command = command.split('"')[1] if '"' in command else command.split(' ')[0]
+                                        if os.path.exists(command):
+                                            apps.append((app_name, command))
+                            except:
+                                continue
+                    except:
+                        continue
+        except Exception as e:
+            print(f"Errore scansione registro: {e}")
+        return apps
+
+    def setup_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(10)
+        
+        info = QLabel(f"Seleziona un'applicazione per inviare l'email a:<br><b style='color: #00bcd4; font-size: 16px;'>{self.email}</b>")
+        info.setAlignment(Qt.AlignCenter)
+        info.setWordWrap(True)
+        info.setStyleSheet("""
+            QLabel {
+                font-size: 14px; 
+                margin-bottom: 5px; 
+                padding: 15px; 
+                background: #252525; 
+                border: 1px solid #333;
+                border-radius: 8px;
+                color: #e0e0e0;
+            }
+        """)
+        layout.addWidget(info)
+        
+        # 1. Local Apps
+        label_local = QLabel("APPLICAZIONI INSTALLATE")
+        label_local.setStyleSheet("color: #00bcd4; font-size: 12px; font-weight: bold; margin-top: 10px;")
+        layout.addWidget(label_local)
+        
+        local_apps = self.get_installed_mail_apps()
+        
+        # Fallback for Thunderbird if not in registry but in path (common)
+        tb_paths = [
+            r"C:\Program Files\Mozilla Thunderbird\thunderbird.exe",
+            r"C:\Program Files (x86)\Mozilla Thunderbird\thunderbird.exe"
+        ]
+        for path in tb_paths:
+            if os.path.exists(path) and not any(path in a[1] for a in local_apps):
+                local_apps.append(("Mozilla Thunderbird", path))
+
+        if not any("mailto" in str(a[1]) for a in local_apps):
+            local_apps.insert(0, ("Predefinita di Sistema", "mailto"))
+
+        for name, path in local_apps:
+            icon = "📧"
+            if "thunderbird" in path.lower(): icon = "🕊️"
+            elif "outlook" in path.lower(): icon = "✉️"
+            
+            btn = self.create_option_button(f"{icon}  {name}", path)
+            layout.addWidget(btn)
+
+        # 2. Webmail
+        label_web = QLabel("WEBMAIL")
+        label_web.setStyleSheet("color: #00bcd4; font-size: 12px; font-weight: bold; margin-top: 10px;")
+        layout.addWidget(label_web)
+        
+        web_options = [
+            ("Gmail", "🌐 G", f"https://mail.google.com/mail/?view=cm&fs=1&to={self.email}"),
+            ("Outlook / Hotmail", "🌐 O", f"https://outlook.office.com/mail/deeplink/compose?to={self.email}")
+        ]
+        
+        for name, icon, url in web_options:
+            btn = self.create_option_button(f"{icon}  {name}", url)
+            layout.addWidget(btn)
+            
+        # 3. Utilities
+        label_util = QLabel("ALTRO")
+        label_util.setStyleSheet("color: #00bcd4; font-size: 12px; font-weight: bold; margin-top: 10px;")
+        layout.addWidget(label_util)
+        
+        btn_copy = self.create_option_button("📋  Copia Indirizzo Email", "copy")
+        layout.addWidget(btn_copy)
+        
+        layout.addSpacing(10)
+        btn_cancel = QPushButton("Annulla")
+        btn_cancel.setFixedHeight(45)
+        btn_cancel.setCursor(Qt.PointingHandCursor)
+        btn_cancel.setStyleSheet("""
+            QPushButton {
+                background-color: #333;
+                color: white;
+                border: 1px solid #444;
+                border-radius: 6px;
+                font-size: 14px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #444;
+                border-color: #555;
+            }
+        """)
+        btn_cancel.clicked.connect(self.reject)
+        layout.addWidget(btn_cancel)
+
+    def create_option_button(self, text, action):
+        btn = QPushButton(text)
+        btn.setFixedHeight(50)
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.setStyleSheet("""
+            QPushButton {
+                text-align: left;
+                padding-left: 20px;
+                font-size: 15px;
+                border: 1px solid #333;
+                border-radius: 8px;
+                background-color: #1e1e1e;
+                color: #ffffff;
+            }
+            QPushButton:hover {
+                background-color: #2e2e2e;
+                border-color: #00bcd4;
+                color: #00bcd4;
+            }
+        """)
+        btn.clicked.connect(lambda _, a=action: self.handle_action(a))
+        return btn
+
+    def handle_action(self, action):
+        if action == "copy":
+            QApplication.clipboard().setText(self.email)
+            QMessageBox.information(self, "Copiato", "Indirizzo email copiato negli appunti.")
+        elif action == "mailto":
+            QDesktopServices.openUrl(QUrl(f"mailto:{self.email}"))
+        elif action.startswith("http"):
+            QDesktopServices.openUrl(QUrl(action))
+        else:
+            # Assume it's an executable path
+            try:
+                if "thunderbird.exe" in action.lower():
+                    subprocess.Popen([action, "-compose", f"to={self.email}"])
+                else:
+                    # Generic launch (might need mailto if it's not and exe)
+                    if os.path.exists(action):
+                        # Try passing mailto to the exe as argument? 
+                        # Most mail apps support mailto:email
+                        subprocess.Popen([action, f"mailto:{self.email}"])
+                    else:
+                        QDesktopServices.openUrl(QUrl(f"mailto:{self.email}"))
+            except Exception as e:
+                QMessageBox.warning(self, "Errore", f"Impossibile avviare l'applicazione: {e}")
+        self.accept()
+
+
+class ClientInvoicesDialog(QDialog):
+    """Dialog to show all invoices of a specific client."""
+    def __init__(self, cliente, invoices, parent=None):
+        super().__init__(parent)
+        name = cliente.ragione_sociale if cliente else "Sconosciuto"
+        self.setWindowTitle(f"Fatture Cliente: {name}")
+        self.resize(1000, 550)
+        self.invoices = invoices
+        
+        # Calculate totals
+        self.total_amount = sum(inv.totale for inv in invoices)
+        self.total_count = len(invoices)
+        
+        self.setup_ui()
+
+    def setup_ui(self):
+        layout = QVBoxLayout(self)
+        
+        header = QLabel(f"Elenco Fatture")
+        header.setStyleSheet("font-size: 20px; font-weight: bold; color: #00bcd4;")
+        layout.addWidget(header)
+        
+        self.table = QTableWidget()
+        headers = ["Numero", "Data", "Causale", "Totale", "Azioni"]
+        self.table.setColumnCount(len(headers))
+        self.table.setHorizontalHeaderLabels(headers)
+        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.setSortingEnabled(True)
+        
+        self.table.setRowCount(len(self.invoices))
+        for i, inv in enumerate(self.invoices):
+            self.table.setItem(i, 0, make_item(inv.numero))
+            self.table.setItem(i, 1, make_item(inv.data))
+            self.table.setItem(i, 2, make_item(inv.causale or ""))
+            self.table.setItem(i, 3, make_item(f"€ {inv.totale:.2f}", raw_value=inv.totale))
+            
+            # Action button or text
+            act_item = QTableWidgetItem("🔍 Dettaglio")
+            act_item.setForeground(QColor("#00bcd4"))
+            self.table.setItem(i, 4, act_item)
+            
+            # Store ID in UserRole for the erste column
+            self.table.item(i, 0).setData(Qt.UserRole, inv.id)
+
+        self.table.cellDoubleClicked.connect(self.open_detail)
+        self.table.cellClicked.connect(self.handle_click)
+        layout.addWidget(self.table)
+        
+        # Footer with totals
+        footer = QFrame()
+        footer.setObjectName("footer_totals")
+        footer.setFrameShape(QFrame.StyledPanel)
+        footer_layout = QHBoxLayout(footer)
+        
+        label_count = QLabel(f"Numero Fatture: {self.total_count}")
+        label_count.setStyleSheet("font-weight: bold;")
+        
+        label_total = QLabel(f"Importo Totale: € {self.total_amount:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
+        label_total.setStyleSheet("font-size: 16px; font-weight: bold; color: #00bcd4;")
+        
+        footer_layout.addWidget(label_count)
+        footer_layout.addStretch()
+        footer_layout.addWidget(label_total)
+        layout.addWidget(footer)
+
+        btn_close = QPushButton("Chiudi")
+        btn_close.clicked.connect(self.accept)
+        layout.addWidget(btn_close)
+
+    def open_detail(self, row, col):
+        inv_id = self.table.item(row, 0).data(Qt.UserRole)
+        if inv_id:
+            main_win = self.parent()
+            while main_win and not hasattr(main_win, 'db_manager'):
+                main_win = main_win.parent()
+            
+            if main_win:
+                session = main_win.db_manager.get_session()
+                fattura = session.get(Fattura, inv_id)
+                if fattura:
+                    main_win.show_detail_window(f"invoice_{inv_id}", InvoiceDialog, fattura)
+                session.close()
+
+    def handle_click(self, row, col):
+        if self.table.horizontalHeaderItem(col).text() == "Azioni":
+            self.open_detail(row, col)
+
+    def closeEvent(self, event):
+        if hasattr(self, 'window_id'):
+            main_win = self.parent()
+            while main_win and not hasattr(main_win, 'remove_detail_window'):
+                main_win = main_win.parent()
+            if main_win:
+                main_win.remove_detail_window(self.window_id)
+        super().closeEvent(event)
+
+
+class ClientDetailDialog(QDialog):
+    """Dialog to show all details of a client."""
+    def __init__(self, cliente, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"Dettagli Cliente: {cliente.ragione_sociale}")
+        self.resize(800, 600)
+        self.cliente = cliente
+        self.setup_ui()
+
+    def setup_ui(self):
+        layout = QVBoxLayout(self)
+        
+        from PySide6.QtWidgets import QScrollArea
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        
+        # Grouping fields
+        groups = [
+            ("Dati Generali", [
+                ("Codice", self.cliente.codice),
+                ("Codice Alternativo", self.cliente.codice_alternativo),
+                ("Ragione Sociale", self.cliente.ragione_sociale),
+                ("Partita IVA", self.cliente.partita_iva),
+                ("Codice Fiscale", self.cliente.codice_fiscale)
+            ]),
+            ("Indirizzo", [
+                ("Indirizzo", self.cliente.indirizzo),
+                ("CAP", self.cliente.cap),
+                ("Località", self.cliente.localita),
+                ("Provincia", self.cliente.provincia),
+                ("Nazione", self.cliente.nazione)
+            ]),
+            ("Contatti", [
+                ("Telefono", self.cliente.telefono),
+                ("Telefono 2", self.cliente.telefono2),
+                ("Cellulare", self.cliente.cellulare),
+                ("E-mail", self.cliente.email),
+                ("Sito Web", self.cliente.internet)
+            ]),
+            ("Pagamento", [
+                ("Codice Pagamento", self.cliente.pagamento),
+                ("Descrizione Pagamento", self.cliente.descrizione_pagamento),
+                ("Banca", self.cliente.banca),
+                ("Filiale", self.cliente.filiale),
+                ("ABI", self.cliente.abi),
+                ("CIN", self.cliente.cin),
+                ("Conto Corrente", self.cliente.conto_corrente),
+                ("IBAN", self.cliente.iban),
+                ("BIC", self.cliente.bic)
+            ]),
+            ("Altro", [
+                ("Agente", self.cliente.agente),
+                ("Listino", self.cliente.listino),
+                ("Zona", self.cliente.zona),
+                ("Area", self.cliente.area),
+                ("Categoria", self.cliente.categoria),
+                ("Statistico", self.cliente.statistico),
+                ("Riferimento", self.cliente.riferimento),
+                ("Commento", self.cliente.commento)
+            ])
+        ]
+        
+        for title, fields in groups:
+            group_box = QGroupBox(title)
+            form = QFormLayout(group_box)
+            for label, value in fields:
+                row_widget = QWidget()
+                row_layout = QHBoxLayout(row_widget)
+                row_layout.setContentsMargins(0, 0, 0, 0)
+                row_layout.setSpacing(10)
+                
+                val_label = QLabel(str(value) if value else "-")
+                val_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+                val_label.setStyleSheet("font-size: 14px;")
+                row_layout.addWidget(val_label)
+                
+                # Action Buttons
+                # Map labels to their actions
+                if value and value != "-":
+                    btn = QPushButton() # Create button here to avoid repetition
+                    if label == "E-mail":
+                        btn.setIcon(get_icon("email"))
+                        btn.setToolTip(f"Invia email a {value}")
+                        btn.clicked.connect(lambda _, v=value: MailSelectorDialog(v, self).exec())
+                        self._setup_action_button(btn, row_layout)
+                    elif label == "Sito Web":
+                        btn.setIcon(get_icon("web"))
+                        btn.setToolTip(f"Visita {value}")
+                        url = value if value.startswith("http") else f"http://{value}"
+                        btn.clicked.connect(lambda _, u=url: QDesktopServices.openUrl(QUrl(u)))
+                        self._setup_action_button(btn, row_layout)
+                    elif label == "Indirizzo":
+                        btn.setIcon(get_icon("map"))
+                        btn.setToolTip("Apri in Google Maps")
+                        full_addr = f"{value}, {self.cliente.cap} {self.cliente.localita} {self.cliente.provincia}"
+                        btn.clicked.connect(lambda _, q=full_addr: QDesktopServices.openUrl(QUrl(f"https://www.google.com/maps/search/?api=1&query={q}")))
+                        self._setup_action_button(btn, row_layout)
+                
+                row_layout.addStretch()
+                form.addRow(f"<b>{label}:</b>", row_widget)
+            content_layout.addWidget(group_box)
+        
+        scroll.setWidget(content)
+        layout.addWidget(scroll)
+
+        # Action Buttons Bottom
+        btn_layout = QHBoxLayout()
+        btn_inv = QPushButton("🔍 Vedi Fatture")
+        btn_inv.clicked.connect(self.jump_to_invoices)
+        btn_layout.addWidget(btn_inv)
+        btn_layout.addStretch()
+        
+        layout.addLayout(btn_layout)
+
+    def closeEvent(self, event):
+        if hasattr(self, 'window_id'):
+            main_win = self.parent()
+            while main_win and not hasattr(main_win, 'remove_detail_window'):
+                main_win = main_win.parent()
+            if main_win:
+                main_win.remove_detail_window(self.window_id)
+        super().closeEvent(event)
+
+    def _setup_action_button(self, btn, layout):
+        btn.setFixedSize(30, 30)
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.setStyleSheet("""
+            QPushButton { 
+                border: 1px solid #00bcd4; 
+                border-radius: 15px; 
+                background: transparent; 
+                color: #00bcd4;
+                font-size: 14px;
+                font-weight: bold;
+            } 
+            QPushButton:hover { 
+                background-color: #00bcd4; 
+                color: white;
+            }
+        """)
+        layout.addWidget(btn)
+
+    def jump_to_invoices(self):
+        main_win = self.parent()
+        while main_win and not hasattr(main_win, 'open_invoices_by_client'):
+            main_win = main_win.parent()
+        
+        if main_win:
+            # Pass both code and name for robust search
+            main_win.open_invoices_by_client(self.cliente.codice, self.cliente.ragione_sociale)
+
+
+class SupplierDetailDialog(QDialog):
+    """Dialog to show all details of a supplier."""
+    def __init__(self, fornitore, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"Dettagli Fornitore: {fornitore.ragione_sociale}")
+        self.resize(800, 600)
+        self.fornitore = fornitore
+        self.setup_ui()
+
+    def setup_ui(self):
+        layout = QVBoxLayout(self)
+        
+        from PySide6.QtWidgets import QScrollArea
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        
+        # Grouping fields
+        groups = [
+            ("Dati Generali", [
+                ("Codice", self.fornitore.codice),
+                ("Ragione Sociale", self.fornitore.ragione_sociale),
+                ("Codice Fiscale", self.fornitore.codice_fiscale),
+                ("Partita IVA", self.fornitore.partita_iva),
+                ("IVA Intra", self.fornitore.partita_iva_intra)
+            ]),
+            ("Indirizzo", [
+                ("Indirizzo Esteso", self.fornitore.indirizzo_esteso),
+                ("Indirizzo", self.fornitore.indirizzo),
+                ("CAP", self.fornitore.cap),
+                ("Località", self.fornitore.localita),
+                ("Provincia", self.fornitore.provincia),
+                ("Nazione", self.fornitore.nazione)
+            ]),
+            ("Contatti", [
+                ("Telefono", self.fornitore.telefono),
+                ("Fax", self.fornitore.fax),
+                ("E-mail", self.fornitore.email)
+            ]),
+            ("Pagamento", [
+                ("Codice Pagamento", self.fornitore.pagamento),
+                ("Descrizione Pagamento", self.fornitore.descrizione_pagamento),
+                ("Banca", self.fornitore.banca),
+                ("Filiale", self.fornitore.filiale),
+                ("ABI", self.fornitore.abi),
+                ("CAB", self.fornitore.cab),
+                ("Conto Corrente", self.fornitore.conto_corrente),
+                ("IBAN", self.fornitore.iban)
+            ]),
+            ("Altro", [
+                ("Porto", self.fornitore.porto),
+                ("Spedizione", self.fornitore.spedizione)
+            ])
+        ]
+        
+        for title, fields in groups:
+            group_box = QGroupBox(title)
+            form = QFormLayout(group_box)
+            for label, value in fields:
+                row_widget = QWidget()
+                row_layout = QHBoxLayout(row_widget)
+                row_layout.setContentsMargins(0, 0, 0, 0)
+                row_layout.setSpacing(10)
+                
+                val_label = QLabel(str(value) if value else "-")
+                val_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+                val_label.setStyleSheet("font-size: 14px;")
+                row_layout.addWidget(val_label)
+                
+                # Action Buttons
+                if value and value != "-":
+                    btn = QPushButton() # Create button here to avoid repetition
+                    if label == "E-mail":
+                        btn.setIcon(get_icon("email"))
+                        btn.setToolTip(f"Invia email a {value}")
+                        btn.clicked.connect(lambda _, v=value: MailSelectorDialog(v, self).exec())
+                        self._setup_action_button(btn, row_layout)
+                    elif label == "Indirizzo":
+                        btn.setIcon(get_icon("map"))
+                        btn.setToolTip("Apri in Google Maps")
+                        full_addr = f"{value}, {self.fornitore.cap} {self.fornitore.localita} {self.fornitore.provincia}"
+                        btn.clicked.connect(lambda _, q=full_addr: QDesktopServices.openUrl(QUrl(f"https://www.google.com/maps/search/?api=1&query={q}")))
+                        self._setup_action_button(btn, row_layout)
+                
+                row_layout.addStretch()
+                form.addRow(f"<b>{label}:</b>", row_widget)
+            content_layout.addWidget(group_box)
+        
+        scroll.setWidget(content)
+        layout.addWidget(scroll)
+        
+        btn_close = QPushButton("Chiudi")
+        btn_close.clicked.connect(self.accept)
+        layout.addWidget(btn_close)
+
+    def _setup_action_button(self, btn, layout):
+        btn.setFixedSize(30, 30)
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.setStyleSheet("""
+            QPushButton { 
+                border: 1px solid #00bcd4; 
+                border-radius: 15px; 
+                background: transparent; 
+                color: #00bcd4;
+                font-size: 14px;
+                font-weight: bold;
+            } 
+            QPushButton:hover { 
+                background-color: #00bcd4; 
+                color: white;
+            }
+        """)
+        layout.addWidget(btn)
+
+    def closeEvent(self, event):
+        if hasattr(self, 'window_id'):
+            main_win = self.parent()
+            while main_win and not hasattr(main_win, 'remove_detail_window'):
+                main_win = main_win.parent()
+            if main_win:
+                main_win.remove_detail_window(self.window_id)
+        super().closeEvent(event)
+
+
+class ArticleDetailDialog(QDialog):
+    """Dialog to show all details of an article."""
+    def __init__(self, articolo, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"Dettagli Articolo: {articolo.codice}")
+        self.resize(600, 400)
+        self.articolo = articolo
+        self.setup_ui()
+
+    def setup_ui(self):
+        layout = QVBoxLayout(self)
+        
+        form_frame = QFrame()
+        form_frame.setFrameShape(QFrame.StyledPanel)
+        form_layout = QVBoxLayout(form_frame)
+        
+        # General Data Group
+        gen_group = QGroupBox("Dati Generali")
+        gen_layout = QFormLayout(gen_group)
+        gen_layout.addRow("Codice:", QLabel(self.articolo.codice))
+        gen_layout.addRow("Descrizione:", QLabel(self.articolo.descrizione))
+        gen_layout.addRow("Unità di Misura:", QLabel(self.articolo.um))
+        gen_layout.addRow("Prezzo:", QLabel(f"€ {self.articolo.prezzo:.2f}"))
+        form_layout.addWidget(gen_group)
+        
+        # Logistics Group
+        log_group = QGroupBox("Logistica e Pesi")
+        log_layout = QFormLayout(log_group)
+        log_layout.addRow("Peso Lordo (kg):", QLabel(str(self.articolo.peso_lordo or "")))
+        log_layout.addRow("Peso Netto (kg):", QLabel(str(self.articolo.peso_netto or "")))
+        form_layout.addWidget(log_group)
+        
+        layout.addWidget(form_frame)
+        
+        # Close Button
+        btn_close = QPushButton("Chiudi")
+        btn_close.clicked.connect(self.accept)
+        layout.addWidget(btn_close)
+
+    def closeEvent(self, event):
+        if self.parent():
+            self.parent().remove_detail_window(f"articolo_{self.articolo.id}")
+        super().closeEvent(event)
+
+class MainWindow(QMainWindow):
+    def __init__(self, db_manager):
+        super().__init__()
+        self.setWindowTitle("Gestionale Tebo per Angeleri")
+        self.resize(1100, 850)
+        self.db_manager = db_manager
+        
+        # Load Preferences (Theme, etc.)
+        self.prefs = load_column_prefs()
+        self.current_theme = self.prefs.get("theme", "dark")
+        
+        self.init_ui()
+        self.apply_theme(self.current_theme)
+        self.detail_windows = {} # Registry for open detail windows
+
+    def apply_theme(self, theme_name):
+        self.current_theme = theme_name
+        self.prefs["theme"] = theme_name
+        save_column_prefs(self.prefs)
+        
+        if theme_name == "dark":
+            self.setStyleSheet("""
+                QWidget { background-color: #303030; color: #ffffff; font-family: Segoe UI, sans-serif; }
+                QFrame#sidebar { background-color: #212121; border-right: 1px solid #424242; }
+                QFrame#topbar { background-color: #212121; border-bottom: 1px solid #424242; }
+                QTableWidget { gridline-color: #424242; background-color: #303030; }
+                QHeaderView::section { background-color: #212121; border: 1px solid #424242; padding: 5px; }
+                QPushButton { background-color: #424242; border-radius: 4px; padding: 8px 15px; }
+                QPushButton:hover { background-color: #616161; }
+                QPushButton:checked { background-color: #00bcd4; color: #000; }
+                QLineEdit { background-color: #212121; border: 1px solid #424242; padding: 5px; }
+            """)
+        else:
+            self.setStyleSheet("""
+                QWidget { background-color: #f5f5f5; color: #333; font-family: Segoe UI, sans-serif; }
+                QFrame#sidebar { background-color: #eeeeee; border-right: 1px solid #ddd; }
+                QFrame#topbar { background-color: #eeeeee; border-bottom: 1px solid #ddd; }
+                QTableWidget { gridline-color: #ddd; background-color: #ffffff; }
+                QHeaderView::section { background-color: #e0e0e0; border: 1px solid #ccc; padding: 5px; }
+                QPushButton { background-color: #e0e0e0; border-radius: 4px; padding: 8px 15px; }
+                QPushButton:hover { background-color: #d0d0d0; }
+                QPushButton:checked { background-color: #00bcd4; color: #fff; }
+                QLineEdit { background-color: #ffffff; border: 1px solid #ccc; padding: 5px; }
+            """)
+
+    def init_ui(self):
+        main_widget = QWidget()
+        self.setCentralWidget(main_widget)
+        parent_layout = QVBoxLayout(main_widget)
+        parent_layout.setContentsMargins(0,0,0,0)
+        parent_layout.setSpacing(0)
+
+        # 1. Top Bar (Logo & Title)
+        top_bar = QFrame()
+        top_bar.setObjectName("topbar")
+        top_bar.setFixedHeight(80)
+        top_layout = QHBoxLayout(top_bar)
+        
+        # Left Logo
+        logo_left = QLabel()
+        logo_left_path = os.path.join(BASE_DIR, "ANGELERI_LOGO_DEFINITIVO.png")
+        if os.path.exists(logo_left_path):
+            pix = QPixmap(logo_left_path).scaled(150, 60, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            logo_left.setPixmap(pix)
+        top_layout.addWidget(logo_left)
+        
+        top_layout.addStretch()
+        
+        # Central Title
+        title = QLabel("Gestionale TEBO")
+        title.setStyleSheet("font-size: 26px; font-weight: bold; color: #00bcd4;")
+        top_layout.addWidget(title)
+        
+        top_layout.addStretch()
+        
+        # Right Logo
+        logo_right = QLabel()
+        logo_right_path = os.path.join(BASE_DIR, "Logo-tebo.png")
+        if os.path.exists(logo_right_path):
+            pix = QPixmap(logo_right_path).scaled(150, 60, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            logo_right.setPixmap(pix)
+        top_layout.addWidget(logo_right)
+        
+        parent_layout.addWidget(top_bar)
+
+        # Main horizontal area
+        main_layout = QHBoxLayout()
+        main_layout.setSpacing(0)
+        parent_layout.addLayout(main_layout)
+
+        # 2. Sidebar
+        self.sidebar = QFrame()
+        self.sidebar.setObjectName("sidebar")
+        self.sidebar.setFixedWidth(200)
+        sidebar_layout = QVBoxLayout(self.sidebar)
+        sidebar_layout.setContentsMargins(10, 20, 10, 20)
+        sidebar_layout.setSpacing(10)
+
+        self.nav_btns = []
+        self.btn_dashboard = self.create_nav_btn("Dashboard")
+        self.btn_clienti = self.create_nav_btn("Clienti")
+        self.btn_fornitori = self.create_nav_btn("Fornitori")
+        self.btn_articoli = self.create_nav_btn("Articoli")
+        self.btn_fatture = self.create_nav_btn("Fatture")
+        self.btn_settings = self.create_nav_btn("Impostazioni")
+        
+        sidebar_layout.addWidget(self.btn_dashboard)
+        sidebar_layout.addWidget(self.btn_clienti)
+        sidebar_layout.addWidget(self.btn_fornitori)
+        sidebar_layout.addWidget(self.btn_articoli)
+        sidebar_layout.addWidget(self.btn_fatture)
+        sidebar_layout.addStretch()
+        sidebar_layout.addWidget(self.btn_settings)
+
+        main_layout.addWidget(self.sidebar)
+
+        # 3. Content Area (Stacked)
+        self.stack = QStackedWidget()
+        main_layout.addWidget(self.stack)
+
+        self.setup_dashboard_view()
+        self.setup_table_view("clienti")
+        self.setup_table_view("fornitori")
+        self.setup_table_view("articoli")
+        self.setup_table_view("fatture")
+        self.setup_settings_view()
+
+        # Events - Connections
+        self.btn_dashboard.clicked.connect(lambda: self.switch_view(0))
+        self.btn_clienti.clicked.connect(lambda: self.switch_view(1))
+        self.btn_fornitori.clicked.connect(lambda: self.switch_view(2))
+        self.btn_articoli.clicked.connect(lambda: self.switch_view(3))
+        self.btn_fatture.clicked.connect(lambda: self.switch_view(4))
+        self.btn_settings.clicked.connect(lambda: self.switch_view(5))
+
+        # Status Bar
+        self.statusBar = QStatusBar()
+        self.setStatusBar(self.statusBar)
+
+        self.switch_view(0)
+
+    def create_nav_btn(self, text, highlight=False):
+        btn = QPushButton(text)
+        btn.setCheckable(True)
+        if highlight:
+            btn.setStyleSheet("color: #ffb74d;")
+        self.nav_btns.append(btn)
+        return btn
+
+    def switch_view(self, index):
+        self.stack.setCurrentIndex(index)
+        for i, btn in enumerate(self.nav_btns):
+            btn.setChecked(i == index)
+        
+        # Reload data based on view
+        if index == 0: self.load_stats()
+        elif index == 1: self.load_table_data("clienti")
+        elif index == 2: self.load_table_data("fornitori")
+        elif index == 3: self.load_table_data("articoli")
+        elif index == 4: self.load_table_data("fatture")
+        elif index == 5: pass
+
+    # --- VIEWS SETUP ---
+    def setup_dashboard_view(self):
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        header = QLabel("Dashboard")
+        header.setStyleSheet("font-size: 28px; font-weight: bold; margin-bottom: 20px;")
+        layout.addWidget(header)
+        
+        info = QLabel("Benvenuto nel Gestionale Tebo.\nSeleziona una voce dal menu laterale.")
+        layout.addWidget(info)
+        
+        self.db_info_label = QLabel("Database: -")
+        self.db_info_label.setStyleSheet("font-size: 14px; font-weight: bold; color: #00bcd4; margin-top: 10px;")
+        layout.addWidget(self.db_info_label)
+
+        self.stats_label = QLabel("Caricamento statistiche...")
+        self.stats_label.setStyleSheet("font-size: 16px; color: #bdbdbd;")
+        layout.addWidget(self.stats_label)
+        
+        layout.addStretch()
+        self.stack.insertWidget(0, page)
+
+    def setup_table_view(self, type_key):
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        
+        # Header
+        top_bar = QHBoxLayout()
+        title = QLabel(type_key.capitalize())
+        title.setFixedWidth(100)
+        title.setStyleSheet("font-size: 20px; font-weight: bold; color: #00bcd4;")
+        top_bar.addWidget(title)
+        
+        search = QLineEdit()
+        search.setPlaceholderText(f"Cerca...")
+        search.textChanged.connect(lambda t, k=type_key: self.filter_table(k, t))
+        search.setObjectName(f"search_{type_key}")
+        top_bar.addWidget(search)
+
+        # Advanced Filters
+        if type_key == "articoli":
+            top_bar.addWidget(QLabel("Prezzo Min:"))
+            p_min = QLineEdit()
+            p_min.setFixedWidth(60)
+            p_min.setObjectName(f"filter_pmin_{type_key}")
+            p_min.textChanged.connect(lambda t: self.filter_table(type_key, search.text()))
+            top_bar.addWidget(p_min)
+            
+            top_bar.addWidget(QLabel("Max:"))
+            p_max = QLineEdit()
+            p_max.setFixedWidth(60)
+            p_max.setObjectName(f"filter_pmax_{type_key}")
+            p_max.textChanged.connect(lambda t: self.filter_table(type_key, search.text()))
+            top_bar.addWidget(p_max)
+            
+        elif type_key == "fatture":
+            top_bar.addWidget(QLabel("Dal:"))
+            d_start = QDateEdit()
+            d_start.setCalendarPopup(True)
+            d_start.setDate(QDate(2020, 1, 1))
+            d_start.setObjectName(f"filter_dstart_{type_key}")
+            d_start.dateChanged.connect(lambda d: self.filter_table(type_key, search.text()))
+            top_bar.addWidget(d_start)
+            
+            top_bar.addWidget(QLabel("Al:"))
+            d_end = QDateEdit()
+            d_end.setCalendarPopup(True)
+            d_end.setDate(QDate.currentDate())
+            d_end.setObjectName(f"filter_dend_{type_key}")
+            d_end.dateChanged.connect(lambda d: self.filter_table(type_key, search.text()))
+            top_bar.addWidget(d_end)
+
+        # Column config button
+        btn_config = QPushButton("⚙")
+        btn_config.setFixedSize(36, 36)
+        btn_config.setStyleSheet("font-size: 18px; padding: 0;")
+        btn_config.setToolTip("Configura colonne visibili")
+        btn_config.clicked.connect(lambda checked, k=type_key: self.open_column_config(k))
+        top_bar.addWidget(btn_config)
+        
+        layout.addLayout(top_bar)
+
+        # Table
+        table = QTableWidget()
+        table.setAlternatingRowColors(True)
+        table.setSelectionBehavior(QTableWidget.SelectRows)
+        table.setEditTriggers(QTableWidget.NoEditTriggers)
+        table.horizontalHeader().setStretchLastSection(True)
+        table.setSortingEnabled(True)
+        table.setObjectName(f"table_{type_key}")
+        
+        # Connect Actions
+        if type_key == "fatture":
+            table.cellDoubleClicked.connect(self.open_invoice_detail)
+            table.cellClicked.connect(self.handle_invoice_table_click)
+        elif type_key == "clienti":
+            table.cellDoubleClicked.connect(self.open_client_detail)
+            table.cellClicked.connect(self.handle_client_table_click)
+        elif type_key == "fornitori":
+            table.cellDoubleClicked.connect(self.open_supplier_detail)
+        elif type_key == "articoli":
+            table.cellDoubleClicked.connect(self.open_article_detail)
+            table.cellClicked.connect(self.handle_article_table_click)
+
+        layout.addWidget(table)
+        self.stack.addWidget(page)
+
+    def setup_settings_view(self):
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        
+        header = QLabel("Impostazioni")
+        header.setStyleSheet("font-size: 28px; font-weight: bold; color: #00bcd4; margin-bottom: 20px;")
+        layout.addWidget(header)
+        
+        # Theme section
+        theme_group = QGroupBox("Interfaccia")
+        theme_layout = QVBoxLayout(theme_group)
+        theme_layout.addWidget(QLabel("Seleziona il tema dell'applicazione:"))
+        
+        theme_selector = QComboBox()
+        theme_selector.addItems(["Scuro", "Chiaro"])
+        theme_selector.setCurrentText("Scuro" if self.current_theme == "dark" else "Chiaro")
+        theme_selector.currentTextChanged.connect(lambda t: self.apply_theme("dark" if t == "Scuro" else "light"))
+        theme_layout.addWidget(theme_selector)
+        layout.addWidget(theme_group)
+        
+        # Database selection section
+        db_group = QGroupBox("Configurazione Database")
+        db_layout = QVBoxLayout(db_group)
+        db_layout.addWidget(QLabel("Seleziona il file database (.db) da utilizzare:"))
+        
+        btn_db = QPushButton("📂 Cambia Database...")
+        btn_db.setStyleSheet("height: 35px;")
+        btn_db.clicked.connect(self.change_db_path)
+        db_layout.addWidget(btn_db)
+        layout.addWidget(db_group)
+
+        # Data Management section
+        import_group = QGroupBox("Manutenzione Dati")
+        import_layout = QVBoxLayout(import_group)
+        import_layout.addWidget(QLabel("ATTENZIONE: L'importazione sovrascrive i dati esistenti."))
+        
+        btn_import = QPushButton("⬇ Importa Dati da Excel")
+        btn_import.setStyleSheet("background-color: #ffb74d; color: #000; font-weight: bold; text-align: center; height: 40px;")
+        btn_import.clicked.connect(self.run_import)
+        import_layout.addWidget(btn_import)
+        
+        layout.addWidget(import_group)
+        
+        layout.addStretch()
+        self.stack.addWidget(page)
+
+    # --- LOGIC ---
+    def load_stats(self):
+        # Update DB path info
+        self.db_info_label.setText(f"File Database Attivo:\n{self.db_manager.db_path}")
+
+        session = self.db_manager.get_session()
+        try:
+            c_count = session.query(Cliente).count()
+            f_count = session.query(Fornitore).count()
+            a_count = session.query(Articolo).count()
+            v_count = session.query(Fattura).count()
+            self.stats_label.setText(f"Statistiche Rapide:\n- Clienti: {c_count}\n- Fornitori: {f_count}\n- Articoli: {a_count}\n- Fatture: {v_count}")
+        except Exception as e:
+            self.stats_label.setText(f"Errore connessione db: {e}")
+        finally:
+            session.close()
+
+    def get_table_widget(self, index):
+        key_map = {1: "clienti", 2: "fornitori", 3: "articoli", 4: "fatture"}
+        key = key_map.get(index)
+        if not key: return None
+        page = self.stack.widget(index)
+        return page.findChild(QTableWidget, f"table_{key}")
+
+    TABLE_COLUMNS = {
+        "clienti": [
+            "ID", "Codice", "Codice Alternativo", "Ragione Sociale", "Indirizzo", "CAP", "Località", "Provincia", 
+            "Partita IVA", "Codice Fiscale", "Telefono", "Email", "Cellulare", "Pagamento", "Banca", "IBAN", "Agente", "Listino", "Azioni"
+        ],
+        "fornitori": [
+            "ID", "Codice", "Ragione Sociale", "Indirizzo Esteso", "Indirizzo", "CAP", "Località", "PR", "Nazione",
+            "Codice Fiscale", "Partita IVA", "IVA Intra", "Telefono", "Fax", "Pagamento", "Descrizione Pagamento",
+            "Banca", "Filiale", "ABI", "CAB", "Conto Corrente", "IBAN", "Porto", "Spedizione", "Email"
+        ],
+        "articoli": ["Codice", "Descrizione", "Prezzo", "UM", "Azioni"],
+        "fatture": ["ID", "Numero", "Data", "Codice Cliente", "Cliente", "Causale", "Totale", "Azioni"],
+    }
+
+    def load_table_data(self, type_key):
+        table = self.findChild(QTableWidget, f"table_{type_key}")
+        if not table: return
+        
+        prefs = load_column_prefs()
+        visible_cols = prefs.get(f"visible_{type_key}", self.TABLE_COLUMNS[type_key])
+        
+        all_cols = self.TABLE_COLUMNS[type_key]
+        table.setColumnCount(len(all_cols))
+        table.setHorizontalHeaderLabels(all_cols)
+        
+        for i, col in enumerate(all_cols):
+            table.setColumnHidden(i, col not in visible_cols)
+            
+        session = self.db_manager.get_session()
+        try:
+            items = []
+            if type_key == "clienti": items = session.query(Cliente).all()
+            elif type_key == "fornitori": items = session.query(Fornitore).all()
+            elif type_key == "articoli": items = session.query(Articolo).all()
+            elif type_key == "fatture": items = session.query(Fattura).order_by(Fattura.data.desc()).all()
+            
+            table.setRowCount(len(items))
+            for i, obj in enumerate(items):
+                if type_key == "clienti":
+                    table.setItem(i, 0, make_item(obj.id, user_role_data=obj.id))
+                    table.setItem(i, 1, make_item(obj.codice))
+                    table.setItem(i, 2, make_item(obj.codice_alternativo))
+                    table.setItem(i, 3, make_item(obj.ragione_sociale))
+                    table.setItem(i, 4, make_item(obj.indirizzo))
+                    table.setItem(i, 5, make_item(obj.cap))
+                    table.setItem(i, 6, make_item(obj.localita))
+                    table.setItem(i, 7, make_item(obj.provincia))
+                    table.setItem(i, 8, make_item(obj.partita_iva))
+                    table.setItem(i, 9, make_item(obj.codice_fiscale))
+                    table.setItem(i, 10, make_item(obj.telefono))
+                    table.setItem(i, 11, make_item(obj.email))
+                    table.setItem(i, 12, make_item(obj.cellulare))
+                    table.setItem(i, 13, make_item(obj.pagamento))
+                    table.setItem(i, 14, make_item(obj.banca))
+                    table.setItem(i, 15, make_item(obj.iban))
+                    table.setItem(i, 16, make_item(obj.agente))
+                    table.setItem(i, 17, make_item(obj.listino))
+                    # Actions
+                    act_item = QTableWidgetItem("📄 Fatture")
+                    act_item.setForeground(QColor("#ffb74d"))
+                    table.setItem(i, 18, act_item)
+                
+                elif type_key == "fornitori":
+                    table.setItem(i, 0, make_item(obj.id, user_role_data=obj.id))
+                    table.setItem(i, 1, make_item(obj.codice))
+                    table.setItem(i, 2, make_item(obj.ragione_sociale))
+                    table.setItem(i, 3, make_item(obj.indirizzo_esteso))
+                    table.setItem(i, 4, make_item(obj.indirizzo))
+                    table.setItem(i, 5, make_item(obj.cap))
+                    table.setItem(i, 6, make_item(obj.localita))
+                    table.setItem(i, 7, make_item(obj.provincia))
+                    table.setItem(i, 8, make_item(obj.nazione))
+                    table.setItem(i, 9, make_item(obj.codice_fiscale))
+                    table.setItem(i, 10, make_item(obj.partita_iva))
+                    table.setItem(i, 11, make_item(obj.partita_iva_intra))
+                    table.setItem(i, 12, make_item(obj.telefono))
+                    table.setItem(i, 13, make_item(obj.fax))
+                    table.setItem(i, 14, make_item(obj.pagamento))
+                    table.setItem(i, 15, make_item(obj.descrizione_pagamento))
+                    table.setItem(i, 16, make_item(obj.banca))
+                    table.setItem(i, 17, make_item(obj.filiale))
+                    table.setItem(i, 18, make_item(obj.abi))
+                    table.setItem(i, 19, make_item(obj.cab))
+                    table.setItem(i, 20, make_item(obj.conto_corrente))
+                    table.setItem(i, 21, make_item(obj.iban))
+                    table.setItem(i, 22, make_item(obj.porto))
+                    table.setItem(i, 23, make_item(obj.spedizione))
+                    table.setItem(i, 24, make_item(obj.email))
+
+                elif type_key == "articoli":
+                    table.setItem(i, 0, make_item(obj.codice, user_role_data=obj.id))
+                    table.setItem(i, 1, make_item(obj.descrizione))
+                    table.setItem(i, 2, make_item(f"€ {obj.prezzo:.2f}", raw_value=obj.prezzo))
+                    table.setItem(i, 3, make_item(obj.um))
+                    # Actions
+                    act_item = QTableWidgetItem("👁 Vedi")
+                    act_item.setForeground(QColor("#00bcd4"))
+                    table.setItem(i, 4, act_item)
+                    
+                elif type_key == "fatture":
+                    table.setItem(i, 0, make_item(obj.id, user_role_data=obj.id))
+                    table.setItem(i, 1, make_item(obj.numero))
+                    table.setItem(i, 2, make_item(obj.data))
+                    table.setItem(i, 3, make_item(obj.cliente_codice or ""))
+                    table.setItem(i, 4, make_item(obj.cliente_denominazione or ""))
+                    table.setItem(i, 5, make_item(obj.causale or ""))
+                    table.setItem(i, 6, make_item(f"€ {obj.totale:.2f}", raw_value=obj.totale))
+                    # Actions
+                    act_item = QTableWidgetItem("👤 Cliente")
+                    act_item.setForeground(QColor("#00bcd4"))
+                    table.setItem(i, 7, act_item)
+
+        finally:
+            session.close()
+
+    def open_column_config(self, type_key):
+        prefs = load_column_prefs()
+        current_visible = prefs.get(f"visible_{type_key}", self.TABLE_COLUMNS[type_key])
+        
+        dlg = ColumnConfigDialog(self.TABLE_COLUMNS[type_key], current_visible, self)
+        if dlg.exec():
+            new_visible = dlg.get_visible_columns()
+            prefs[f"visible_{type_key}"] = new_visible
+            save_column_prefs(prefs)
+            self.load_table_data(type_key)
+
+    def open_invoice_detail(self, row, col):
+        table = self.get_table_widget(4)
+        inv_id = None
+        for c in range(table.columnCount()):
+            item = table.item(row, c)
+            if item and item.data(Qt.UserRole) is not None:
+                inv_id = item.data(Qt.UserRole)
+                break
+        
+        if not inv_id:
+            QMessageBox.warning(self, "Errore", "ID fattura non trovato. Assicurati che la colonna 'ID' sia visibile.")
+            return
+            
+        session = self.db_manager.get_session()
+        try:
+            fattura = session.get(Fattura, inv_id)
+            if fattura:
+                self.show_detail_window(f"invoice_{inv_id}", InvoiceDialog, fattura)
+            else:
+                QMessageBox.warning(self, "Errore", "Fattura non trovata.")
+        except Exception as e:
+            QMessageBox.critical(self, "Errore", str(e))
+        finally:
+            session.close()
+
+    def open_client_detail(self, row, col):
+        table = self.sender()
+        cli_id = None
+        for c in range(table.columnCount()):
+            item = table.item(row, c)
+            if item and item.data(Qt.UserRole) is not None:
+                cli_id = item.data(Qt.UserRole)
+                break
+        
+        if not cli_id:
+            QMessageBox.warning(self, "Errore", "ID cliente non trovato. Assicurati che la colonna 'ID' sia visibile.")
+            return
+            
+        session = self.db_manager.get_session()
+        try:
+            cliente = session.get(Cliente, cli_id)
+            if cliente:
+                self.show_detail_window(f"client_{cli_id}", ClientDetailDialog, cliente)
+            else:
+                QMessageBox.warning(self, "Errore", "Cliente non trovato.")
+        except Exception as e:
+            QMessageBox.critical(self, "Errore", str(e))
+        finally:
+            session.close()
+
+    def open_supplier_detail(self, row, col):
+        table = self.get_table_widget(2) # Fornitori
+        item = table.item(row, 0)
+        if not item:
+            QMessageBox.warning(self, "Errore", "ID fornitore non trovato. Assicurati che la colonna 'ID' sia visibile.")
+            return
+        
+        supplier_id = item.data(Qt.UserRole)
+        session = self.db_manager.get_session()
+        try:
+            supplier = session.get(Fornitore, supplier_id)
+            if supplier:
+                self.show_detail_window(f"supplier_{supplier_id}", SupplierDetailDialog, supplier)
+            else:
+                QMessageBox.warning(self, "Errore", "Fornitore non trovato.")
+        except Exception as e:
+            QMessageBox.critical(self, "Errore", str(e))
+        finally:
+            session.close()
+
+    def open_article_detail(self, row, col):
+        table = self.get_table_widget(3) # Articoli
+        item = table.item(row, 0)
+        if not item: return
+        
+        # In Articoli, the code is used as unique identifier usually, 
+        # but let's use the DB ID if we set it in UserRole.
+        # Looking at load_table_data, I need to set UserRole for Articoli ID.
+        article_id = item.data(Qt.UserRole)
+        if not article_id:
+            # Fallback to code if ID is not in UserRole
+            code = item.text()
+            session = self.db_manager.get_session()
+            article = session.query(Articolo).filter_by(codice=code).first()
+            session.close()
+        else:
+            session = self.db_manager.get_session()
+            article = session.get(Articolo, article_id)
+            session.close()
+        
+        if article:
+            self.show_detail_window(f"article_{article.id}", ArticleDetailDialog, article)
+
+    def change_db_path(self):
+        """Open a file dialog to select a new database file."""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Seleziona Database", "", "Database SQLite (*.db);;Tutti i file (*.*)"
+        )
+        if file_path:
+            self.reconnect_db(file_path)
+
+    def reconnect_db(self, path):
+        """Reconnect the application to a different database path."""
+        if not os.path.exists(path):
+            QMessageBox.warning(self, "Errore", f"Il file database specificato non esiste:\n{path}")
+            return
+
+        try:
+            new_db_man = DatabaseManager(path)
+            # Test connection
+            session = new_db_man.get_session()
+            session.query(Cliente).first() # Simple query to check if it's a valid DB
+            session.close()
+            
+            # If successful, switch
+            self.db_manager = new_db_man
+            self.prefs["db_path"] = path
+            save_column_prefs(self.prefs)
+            
+            self.load_stats()
+            # Also clear open detail windows as they reference the old DB
+            for win in list(self.detail_windows.values()):
+                win.close()
+            self.detail_windows.clear()
+            
+            QMessageBox.information(self, "Database Aggiornato", f"Connessione stabilita con successo a:\n{path}")
+        except Exception as e:
+            QMessageBox.critical(self, "Errore Database", f"Impossibile collegarsi al database:\n{e}")
+
+    def filter_table(self, key, text):
+        idx_map = {"clienti": 1, "fornitori": 2, "articoli": 3, "fatture": 4}
+        table = self.get_table_widget(idx_map[key])
+        if not table: return
+        
+        # Advanced Filter Values
+        p_min = -1.0
+        p_max = 9999999.0
+        d_start = QDate(1900, 1, 1)
+        d_end = QDate(2100, 1, 1)
+
+        if key == "articoli":
+            pmin_edit = self.findChild(QLineEdit, f"filter_pmin_{key}")
+            pmax_edit = self.findChild(QLineEdit, f"filter_pmax_{key}")
+            if pmin_edit and pmin_edit.text():
+                try: p_min = float(pmin_edit.text().replace(',', '.'))
+                except: pass
+            if pmax_edit and pmax_edit.text():
+                try: p_max = float(pmax_edit.text().replace(',', '.'))
+                except: pass
+        elif key == "fatture":
+            dstart_edit = self.findChild(QDateEdit, f"filter_dstart_{key}")
+            dend_edit = self.findChild(QDateEdit, f"filter_dend_{key}")
+            if dstart_edit: d_start = dstart_edit.date()
+            if dend_edit: d_end = dend_edit.date()
+
+        for i in range(table.rowCount()):
+            # Text Search Match
+            text_match = False if text else True
+            for j in range(table.columnCount()):
+                if not table.isColumnHidden(j):
+                    item = table.item(i, j)
+                    if item and text.lower() in item.text().lower():
+                        if not text or text.lower() in item.text().lower():
+                            text_match = True
+                            break
+            
+            # Advanced Matches
+            adv_match = True
+            if key == "articoli":
+                # Price is in col 2 (0-indexed)
+                item_price = table.item(i, 2)
+                if item_price:
+                    # SortableItem stores raw value in UserRole+1
+                    price = item_price.data(Qt.UserRole + 1)
+                    if price is not None:
+                        if price < p_min or price > p_max:
+                            adv_match = False
+            elif key == "fatture":
+                # Date is in col 2
+                item_date = table.item(i, 2)
+                if item_date:
+                    date_val = item_date.data(Qt.UserRole + 1)
+                    if date_val:
+                        # date_val is a datetime.date object
+                        qdate = QDate(date_val.year, date_val.month, date_val.day)
+                        if qdate < d_start or qdate > d_end:
+                            adv_match = False
+
+            table.setRowHidden(i, not (text_match and adv_match))
+
+    def run_import(self):
+        file_path, _ = QFileDialog.getOpenFileName(self, "Seleziona File Excel", "", "Excel Files (*.xlsx *.xls)")
+        if file_path:
+            from data_manager import DataManager
+            dm = DataManager(self.db_manager)
+            try:
+                dm.import_all(file_path)
+                QMessageBox.information(self, "Successo", "Dati importati con successo!")
+                self.load_stats()
+                self.switch_view(0)
+            except Exception as e:
+                QMessageBox.critical(self, "Errore", str(e))
+                self.statusBar.showMessage("Errore importazione")
+
+    def show_detail_window(self, window_id, dialog_class, *args):
+        """Manage and show detail windows, preventing duplicates."""
+        if window_id in self.detail_windows:
+            win = self.detail_windows[window_id]
+            try:
+                win.show()
+                win.raise_()
+                win.activateWindow()
+                return win
+            except:
+                del self.detail_windows[window_id]
+        
+        win = dialog_class(*args, parent=self)
+        win.setAttribute(Qt.WA_DeleteOnClose)
+        win.window_id = window_id
+        self.detail_windows[window_id] = win
+        win.show()
+        win.raise_()
+        win.activateWindow()
+        return win
+
+    def remove_detail_window(self, window_id):
+        """Remove a window from the registry when closed."""
+        if window_id in self.detail_windows:
+            del self.detail_windows[window_id]
+
+    def open_client_by_code(self, code, name=None):
+        if not code and not name: return
+        session = self.db_manager.get_session()
+        try:
+            cliente = None
+            if code:
+                cliente = session.query(Cliente).filter_by(codice=code).first()
+            
+            if not cliente and code and code.isdigit():
+                for length in [5, 6]:
+                    padded = code.zfill(length)
+                    cliente = session.query(Cliente).filter_by(codice=padded).first()
+                    if cliente: break
+            
+            if not cliente and name:
+                cliente = session.query(Cliente).filter_by(ragione_sociale=name).first()
+            
+            if not cliente and name:
+                cliente = session.query(Cliente).filter(Cliente.ragione_sociale.ilike(f"%{name}%")).first()
+
+            if cliente:
+                self.show_detail_window(f"client_{cliente.id}", ClientDetailDialog, cliente)
+            else:
+                msg = f"Cliente con codice '{code}'"
+                if name: msg += f" o nome '{name}'"
+                QMessageBox.warning(self, "Attenzione", f"{msg} non trovato nell'anagrafica.")
+        finally:
+            session.close()
+
+    def handle_client_table_click(self, row, col):
+        table = self.sender()
+        header = table.horizontalHeaderItem(col).text()
+        if header == "Azioni":
+            cli_id = None
+            for c in range(table.columnCount()):
+                item = table.item(row, c)
+                if item and item.data(Qt.UserRole) is not None:
+                    cli_id = item.data(Qt.UserRole)
+                    break
+            if cli_id:
+                session = self.db_manager.get_session()
+                cliente = session.get(Cliente, cli_id)
+                if cliente:
+                    self.open_invoices_by_client(cliente.codice, cliente.ragione_sociale)
+                session.close()
+
+    def handle_article_table_click(self, row, col):
+        table = self.sender()
+        header = table.horizontalHeaderItem(col).text()
+        if header == "Azioni":
+            self.open_article_detail(row, col)
+
+    def handle_invoice_table_click(self, row, col):
+        table = self.sender()
+        header = table.horizontalHeaderItem(col).text()
+        if header == "Azioni":
+            cli_code = None
+            cli_name = None
+            for c in range(table.columnCount()):
+                h_text = table.horizontalHeaderItem(c).text()
+                if h_text == "Codice Cliente":
+                    cli_code = table.item(row, c).text()
+                elif h_text == "Cliente":
+                    cli_name = table.item(row, c).text()
+                    
+            if cli_code or cli_name:
+                self.open_client_by_code(cli_code, cli_name)
+
+    def open_invoices_by_client(self, code, name=None):
+        if not code and not name: return
+        session = self.db_manager.get_session()
+        try:
+            from sqlalchemy import or_
+            candidate_codes = set()
+            if code:
+                candidate_codes.add(code)
+                candidate_codes.add(code.lstrip('0'))
+                if code.isdigit():
+                    candidate_codes.add(code.zfill(5))
+                    candidate_codes.add(code.zfill(6))
+            
+            query = session.query(Fattura)
+            filters = []
+            if candidate_codes:
+                filters.append(Fattura.cliente_codice.in_(list(candidate_codes)))
+            if name:
+                filters.append(Fattura.cliente_denominazione == name)
+                filters.append(Fattura.cliente_denominazione.ilike(f"%{name}%"))
+            
+            invoices = query.filter(or_(*filters)).order_by(Fattura.data.desc()).all()
+            
+            if not invoices:
+                display_name = name or code
+                QMessageBox.information(self, "Informazione", f"Nessuna fattura trovata per il cliente: {display_name}")
+                return
+            
+            cliente = None
+            if code:
+                cliente = session.query(Cliente).filter_by(codice=code).first()
+            if not cliente and name:
+                cliente = session.query(Cliente).filter_by(ragione_sociale=name).first()
+
+            self.show_detail_window(f"invoices_client_{code or name}", ClientInvoicesDialog, cliente, invoices)
+        finally:
+            session.close()
+
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    
+    # Preferences Setup
+    prefs = load_column_prefs()
+    
+    # Default DB Setup
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    default_db_path = os.path.join(base_dir, "tebo.db")
+    
+    # Use saved DB path if it exists, otherwise default
+    db_path = prefs.get("db_path", default_db_path)
+    
+    if not os.path.exists(db_path):
+        if os.path.exists(default_db_path):
+            db_path = default_db_path
+        else:
+            print(f"Warning: DB not found at {db_path}. It will be created on import.")
+
+    db_man = DatabaseManager(db_path)
+    
+    window = MainWindow(db_man)
+    window.show()
+    sys.exit(app.exec())

@@ -1,0 +1,75 @@
+# Task: Setup New Project 'gestionale-tebo'
+
+- [x] Analyze existing guidelines in `Gestionale Karate/docs/AI_history` <!-- id: 0 -->
+- [x] Analyze existing files in `gestionale-tebo` <!-- id: 1 -->
+- [x] Create detailed project plan including: <!-- id: 2 -->
+    - [x] General architecture <!-- id: 3 -->
+    - [x] Management system type <!-- id: 4 -->
+    - [x] Database proposal <!-- id: 5 -->
+    - [x] Sync strategy <!-- id: 6 -->
+    - [x] Development and versioning flow <!-- id: 7 -->
+- [x] Initialize project structure following guidelines <!-- id: 8 -->
+    - [x] Create `.gitignore` <!-- id: 9 -->
+    - [x] Create `requirements.txt` <!-- id: 10 -->
+    - [x] Create `docs/ai_history/` <!-- id: 11 -->
+    - [x] Initialize Git repository <!-- id: 12 -->
+- [x] Implement core functionality <!-- id: 13 -->
+    - [x] Setup database (SQLite) <!-- id: 14 -->
+    - [x] Implement Excel import logic <!-- id: 15 -->
+    - [x] Create basic GUI (PySide6) <!-- id: 16 -->
+- [x] Refine UI and Fix Data Display <!-- id: 17 -->
+    - [x] Analyze Karate UI patterns <!-- id: 18 -->
+    - [x] Implement Sidebar layout <!-- id: 19 -->
+    - [x] Switch to manual QTableWidget population <!-- id: 20 -->
+    - [x] Fix Data Import <!-- id: 21 -->
+    - [x] Verify final interface <!-- id: 22 -->
+- [x] Upload to GitHub <!-- id: 23 -->
+    - [x] Configure Remote `officina-angeleri/gestionale-tebo` <!-- id: 24 -->
+    - [x] Push to main branch <!-- id: 25 -->
+- [ ] Refactor Sales to Invoices <!-- id: 26 -->
+    - [x] Create `Fattura` model <!-- id: 27 -->
+    - [x] Link `RigaVendita` to `Fattura` <!-- id: 28 -->
+    - [x] Update `import_vendite` logic to aggregate by Invoice <!-- id: 29 -->
+    - [x] Update UI to show Invoices list <!-- id: 30 -->
+    - [x] Create Detail Dialog for Invoice Rows <!-- id: 31 -->
+- [x] Enhance Clienti Tab <!-- id: 32 -->
+    - [x] Expand `Cliente` model to include all fields <!-- id: 33 -->
+    - [x] Update import logic for all client fields <!-- id: 34 -->
+    - [x] Create `ClientDetailDialog` <!-- id: 35 -->
+    - [x] Enable column config and persistence for Clienti <!-- id: 36 -->
+- [x] Refine Client Import <!-- id: 37 -->
+    - [x] Add `_clean` helper to handle `NaN` as empty string <!-- id: 38 -->
+    - [x] Fix column name mismatches (trailing spaces) <!-- id: 39 -->
+    - [x] Rebuild DB and re-import all data <!-- id: 40 -->
+    - [x] Verify address and empty field handling <!-- id: 41 -->
+- [x] Bidirectional Navigation between Clients and Invoices <!-- id: 47 -->
+    - [x] Link Invoices to Clients in main table and detail dialog <!-- id: 48 -->
+    - [x] Link Clients to Invoices in main table and detail dialog <!-- id: 49 -->
+    - [x] Implement `ClientInvoicesDialog` to show filtered invoice list <!-- id: 50 -->
+- [x] Enhance Fornitori Tab <!-- id: 51 -->
+    - [x] Expand `Fornitore` model and import logic <!-- id: 52 -->
+    - [x] Create `SupplierDetailDialog` <!-- id: 53 -->
+    - [x] Enable column config and persistence for Fornitori <!-- id: 54 -->
+    - [x] Rebuild DB and verify <!-- id: 55 -->
+- [x] Branding and Settings <!-- id: 56 -->
+    - [x] Add Settings Tab with Theme Switching (Light/Dark) <!-- id: 57 -->
+    - [x] Implement branding header with logos ("Gestionale Tebo per Angeleri") <!-- id: 58 -->
+    - [x] Move "Importa Excel" button to Settings tab <!-- id: 59 -->
+    - [x] Persist theme preference <!-- id: 60 -->
+- [x] Robust Client Search in Invoices <!-- id: 61 -->
+    - [x] Implement smart search in `open_client_by_code` (leading zeros, name match) <!-- id: 62 -->
+    - [x] Update `handle_invoice_table_click` to pass client name <!-- id: 63 -->
+    - [x] Update `InvoiceDialog.jump_to_client` to pass client name <!-- id: 64 -->
+- [x] Robust Invoice Search for Clients <!-- id: 65 -->
+    - [x] Implement smart search in `open_invoices_by_client` (leading zeros, name match) <!-- id: 66 -->
+    - [x] Update `handle_client_table_click` to pass client name <!-- id: 67 -->
+    - [x] Update `ClientDetailDialog.jump_to_invoices` to pass client name <!-- id: 68 -->
+- [x] Prevent Duplicate Dialogs and Loops <!-- id: 69 -->
+    - [x] Implement `open_dialogs` registry in `MainWindow` <!-- id: 70 -->
+    - [x] Update detail dialogs to use `show()` (non-modal) and track instances <!-- id: 71 -->
+    - [x] Implement "bring to front" logic for existing windows <!-- id: 72 -->
+- [x] Database Path Management <!-- id: 73 -->
+    - [x] Display active DB path on Dashboard <!-- id: 74 -->
+    - [x] Add DB selector in Settings tab <!-- id: 75 -->
+    - [x] Implement dynamic DB reconnection and persistence <!-- id: 76 -->
+    - [x] Add validation for new DB files <!-- id: 77 -->
