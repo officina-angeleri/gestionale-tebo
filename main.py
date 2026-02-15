@@ -990,6 +990,9 @@ class ArticleSearchDialog(QDialog):
         restore_column_order(self.table, "article_search")
         self._restore_column_widths()
         
+        # Connect double click
+        self.table.cellDoubleClicked.connect(self.handle_double_click)
+        
         footer = QHBoxLayout()
         self.status_label = QLabel("Inserisci i termini di ricerca (logica AND) e premi Invio. Usa % per 'contiene'.")
         self.status_label.setStyleSheet("color: #888; font-style: italic;")
@@ -1042,7 +1045,8 @@ class ArticleSearchDialog(QDialog):
             self.table.insertRow(row)
             
             # Invoice Info
-            self.table.setItem(row, 0, make_item(riga.fattura.numero))
+            # Store fattura object in the first column for double-click retrieval
+            self.table.setItem(row, 0, make_item(riga.fattura.numero, user_role_data=riga.fattura))
             self.table.setItem(row, 1, make_item(riga.fattura.data.strftime("%d/%m/%Y") if riga.fattura.data else "-", raw_value=riga.fattura.data))
             self.table.setItem(row, 2, make_item(riga.fattura.cliente_denominazione))
             self.table.setItem(row, 3, make_item(riga.fattura.cliente_codice or "-"))
@@ -1063,6 +1067,14 @@ class ArticleSearchDialog(QDialog):
             self.table.setCellWidget(row, 9, btn_detail)
         
         self.table.setSortingEnabled(True)
+
+    def handle_double_click(self, row, col):
+        """Open invoice detail on double click."""
+        item = self.table.item(row, 0)
+        if item:
+            fattura = item.data(Qt.UserRole)
+            if fattura:
+                self.open_invoice_detail(fattura)
 
     def _save_column_widths(self):
         """Save current column widths for article search."""

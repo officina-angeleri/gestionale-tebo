@@ -1,38 +1,30 @@
-# Refinement: Column Resizability, Date Sorting, and Search Fields
+# Refinement: Column Resizability, Date Sorting, Search Fields, and Quick Actions
 
-Improve the user experience by ensuring date columns sort chronologically, making the article search results columns resizable, and allowing field selection in the article search.
+Improve the user experience by ensuring date columns sort chronologically, making the article search results columns resizable, allowing field selection in the article search, and adding quick actions like double-click to open details.
 
 ## Proposed Changes
 
 ### [main.py](file:///c:/Users/Simone/.gemini/antigravity/scratch/gestionale-tebo/main.py)
 
-#### [MODIFY] Imports
-- Add `QCheckBox` to `PySide6.QtWidgets` imports.
-
 #### [MODIFY] `ArticleSearchDialog`
 - **UI UPDATES**:
-    - Add `self.cb_code = QCheckBox("Codice articolo")` and `self.cb_desc = QCheckBox("Descrizione articolo")`.
-    - Set both to `Checked` by default.
-    - Add them to a horizontal layout below the search bar.
+    - Connect `self.table.cellDoubleClicked` to a new method `handle_double_click`.
 - **LOGIC UPDATES**:
-    - Modify `perform_search` to build `conditions` based on checkbox states.
-    - If `cb_code` is checked, include `articolo_codice` in the `or_` for each word.
-    - If `cb_desc` is checked, include `descrizione` in the `or_` for each word.
-    - If neither is checked, default to searching both (effectively treating it as both checked).
+    - In `display_results`, set `user_role_data=riga.fattura` for the first column item using `make_item`.
+    - Implement `handle_double_click(self, row, column)` to retrieve the `fattura` object from the row's first item and call `self.open_invoice_detail(fattura)`.
 
 ## Verification Plan
 
 ### Automated Tests
 - Run `main.py` and:
-  1. Open `Ricerca Articolo` (Magnifying glass in Fatture list or similar).
-  2. Test search with only "Codice articolo" checked (e.g., search for a known code).
-  3. Test search with only "Descrizione articolo" checked (e.g., search for a common word like "Vite").
-  4. Test with both checked.
-  5. Test with neither checked (should behave like both checked).
-  6. Verify that column widths and sorting still work as before.
+  1. Open `Ricerca Articolo`.
+  2. Perform a search.
+  3. Double-click on any part of a result row.
+  4. Verify that the correct `InvoiceDetailDialog` opens.
+  5. Verify that the "Dettaglio Fattura" button still works.
 
 ### Manual Verification
-- Confirm that the UI for field selection is compact and clear.
+- Confirm that the double-click feels responsive and consistent with other tables in the app (like the main Invoices table).
 
 ## Verification Plan
 

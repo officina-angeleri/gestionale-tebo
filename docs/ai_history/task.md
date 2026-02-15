@@ -80,3 +80,6 @@
 - [x] Refine Article Search Fields <!-- id: 82 -->
     - [x] Add checkboxes for "Codice articolo" and "Descrizione articolo" <!-- id: 83 -->
     - [x] Update search logic to respect field selection <!-- id: 84 -->
+- [x] Improve Article Search Interaction <!-- id: 85 -->
+    - [x] Add double-click support to search results table <!-- id: 86 -->
+    - [x] Store Fattura object in table items for quick access <!-- id: 87 -->

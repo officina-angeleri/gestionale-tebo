@@ -237,6 +237,11 @@ gestionale-tebo/
 - **Logica di Ricerca**: Aggiornato il metodo `perform_search` per costruire dinamicamente i filtri SQL (OR logico tra i campi selezionati) in base alle preferenze dell'utente.
 - **Default**: Se nessun campo è selezionato, la ricerca avviene automaticamente su entrambi per garantire risultati immediati.
 
+### Session 14 — 15 Febbraio 2026
+**Obiettivo**: Miglioramento Interazione Ricerca.
+- **Doppio Clic**: Abilitato l'apertura del dettaglio fattura tramite doppio clic su qualsiasi riga dei risultati della ricerca articoli, allineando il comportamento alle altre tabelle dell'applicazione.
+- **UX**: Il pulsante "Dettaglio Fattura" rimane disponibile, ma l'azione rapida ora è supportata nativamente.
+
 ---
 
 ## 9. Prompt Principali Usati
