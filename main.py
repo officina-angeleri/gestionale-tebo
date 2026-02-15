@@ -1209,7 +1209,7 @@ class MainWindow(QMainWindow):
         self.btn_clienti = self.create_nav_btn("Clienti")
         self.btn_fornitori = self.create_nav_btn("Fornitori")
         self.btn_articoli = self.create_nav_btn("Articoli")
-        self.btn_fatture = self.create_nav_btn("Fatture")
+        self.btn_fatture = self.create_nav_btn("Fatture Clienti")
         self.btn_settings = self.create_nav_btn("Impostazioni")
         
         sidebar_layout.addWidget(self.btn_dashboard)
@@ -1297,7 +1297,8 @@ class MainWindow(QMainWindow):
         
         # Header
         top_bar = QHBoxLayout()
-        title = QLabel(type_key.capitalize())
+        display_name = "Fatture Clienti" if type_key == "fatture" else type_key.capitalize()
+        title = QLabel(display_name)
         title.setFixedWidth(100)
         title.setStyleSheet("font-size: 20px; font-weight: bold; color: #00bcd4;")
         top_bar.addWidget(title)

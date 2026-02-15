@@ -241,6 +241,7 @@ gestionale-tebo/
 **Obiettivo**: Miglioramento Interazione Ricerca.
 - **Doppio Clic**: Abilitato l'apertura del dettaglio fattura tramite doppio clic su qualsiasi riga dei risultati della ricerca articoli, allineando il comportamento alle altre tabelle dell'applicazione.
 - **UX**: Il pulsante "Dettaglio Fattura" rimane disponibile, ma l'azione rapida ora è supportata nativamente.
+- **Rinominazione**: La scheda "Fatture" è stata rinominata in "Fatture Clienti" per maggiore chiarezza.
 
 ---
 
