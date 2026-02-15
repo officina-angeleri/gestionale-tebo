@@ -244,6 +244,14 @@ gestionale-tebo/
 - **Rinominazione**: La scheda "Fatture" è stata rinominata in "Fatture Clienti" per maggiore chiarezza.
 - **Layout**: Risolto un problema di troncamento del titolo nelle intestazioni delle tabelle rimuovendo la larghezza fissa.
 
+### Session 15 — 15 Febbraio 2026
+**Obiettivo**: Ricerca Incrementale.
+- **Funzionalità**: Implementata la modalità "Ricerca Incrementale" nella finestra di ricerca articoli.
+- **Logica**:
+    - **OFF (Default)**: Ogni ricerca riparte da zero su tutto il database.
+    - **ON**: Le nuove ricerche filtrano i risultati correnti, permettendo di affinare la selezione (es: "tubo" -> poi "pvc" -> trovi tubi in pvc).
+- **UI**: Aggiunto checkbox di attivazione e un'etichetta di stato che indica chiaramente la modalità corrente (Nuova ricerca vs Incrementale).
+
 ---
 
 ## 9. Prompt Principali Usati

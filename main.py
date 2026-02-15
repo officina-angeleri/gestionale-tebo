@@ -925,6 +925,7 @@ class ArticleSearchDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Ricerca Articolo nelle Fatture")
         self.setMinimumSize(1100, 700)
+        self.active_search_steps = []
         self.setup_ui()
 
     def setup_ui(self):
@@ -969,6 +970,18 @@ class ArticleSearchDialog(QDialog):
         self.cb_desc.setStyleSheet("font-weight: bold; color: #00bcd4;")
         options_layout.addWidget(self.cb_code)
         options_layout.addWidget(self.cb_desc)
+        
+        # Incremental search option
+        self.cb_incremental = QCheckBox("Ricerca incrementale")
+        self.cb_incremental.setStyleSheet("font-weight: bold; color: #ffb74d;")
+        self.cb_incremental.setToolTip("Se attivo, la ricerca corrente filtra i risultati precedenti.")
+        self.cb_incremental.stateChanged.connect(self.update_search_mode_label)
+        options_layout.addWidget(self.cb_incremental)
+        
+        self.lbl_mode = QLabel("Modalità: Nuova ricerca")
+        self.lbl_mode.setStyleSheet("color: #888; font-weight: bold; margin-left: 10px;")
+        options_layout.addWidget(self.lbl_mode)
+        
         options_layout.addStretch()
         layout.addLayout(options_layout)
         
@@ -1018,25 +1031,60 @@ class ArticleSearchDialog(QDialog):
                 search_code = True
                 search_desc = True
 
-            conditions = []
-            for word in words:
-                pattern = word if '%' in word else f"%{word}%"
-                field_filters = []
-                if search_desc:
-                    field_filters.append(RigaFattura.descrizione.ilike(pattern))
-                if search_code:
-                    field_filters.append(RigaFattura.articolo_codice.ilike(pattern))
+            current_step = {
+                'words': words,
+                'search_code': search_code,
+                'search_desc': search_desc
+            }
+
+            if not self.cb_incremental.isChecked():
+                self.active_search_steps = [current_step]
+            else:
+                self.active_search_steps.append(current_step)
                 
-                conditions.append(or_(*field_filters))
+            # Build query from all steps
+            all_conditions = []
+            
+            for step in self.active_search_steps:
+                step_conditions = []
+                for word in step['words']:
+                    pattern = word if '%' in word else f"%{word}%"
+                    field_filters = []
+                    if step['search_desc']:
+                        field_filters.append(RigaFattura.descrizione.ilike(pattern))
+                    if step['search_code']:
+                        field_filters.append(RigaFattura.articolo_codice.ilike(pattern))
+                    
+                    step_conditions.append(or_(*field_filters))
                 
-            results = query.filter(and_(*conditions)).order_by(Fattura.data.desc(), Fattura.numero.desc()).all()
+                # Combine words in this step with AND
+                if step_conditions:
+                    all_conditions.append(and_(*step_conditions))
+            
+            # Combine all steps with AND
+            if all_conditions:
+                query = query.filter(and_(*all_conditions))
+                
+            results = query.order_by(Fattura.data.desc(), Fattura.numero.desc()).all()
             
             self.display_results(results)
-            self.status_label.setText(f"Trovate {len(results)} righe corrispondenti.")
+            
+            mode_text = "Incrementale" if self.cb_incremental.isChecked() else "Nuova ricerca"
+            self.status_label.setText(f"[{mode_text}] Trovate {len(results)} righe corrispondenti.")
         except Exception as e:
             self.status_label.setText(f"Errore durante la ricerca: {e}")
+            if self.cb_incremental.isChecked() and self.active_search_steps:
+                 self.active_search_steps.pop() # Remove failed step
         finally:
             session.close()
+
+    def update_search_mode_label(self, state):
+        if self.cb_incremental.isChecked():
+            self.lbl_mode.setText("Modalità: Ricerca incrementale")
+            self.lbl_mode.setStyleSheet("color: #ffb74d; font-weight: bold; margin-left: 10px;")
+        else:
+            self.lbl_mode.setText("Modalità: Nuova ricerca")
+            self.lbl_mode.setStyleSheet("color: #888; font-weight: bold; margin-left: 10px;")
 
     def display_results(self, results):
         self.table.setRowCount(0)

@@ -1,6 +1,6 @@
-# Refinement: Column Resizability, Date Sorting, Search Fields, and Quick Actions
+# Refinement: Column Resizability, Date Sorting, Search Fields, Quick Actions, and Incremental Search
 
-Improve the user experience by ensuring date columns sort chronologically, making the article search results columns resizable, allowing field selection in the article search, and adding quick actions like double-click to open details.
+Improve the user experience by ensuring date columns sort chronologically, making the article search results columns resizable, allowing field selection in the article search, adding quick actions like double-click to open details, and enabling incremental search.
 
 ## Proposed Changes
 
@@ -8,10 +8,18 @@ Improve the user experience by ensuring date columns sort chronologically, makin
 
 #### [MODIFY] `ArticleSearchDialog`
 - **UI UPDATES**:
-    - Connect `self.table.cellDoubleClicked` to a new method `handle_double_click`.
+    - Add `self.cb_incremental = QCheckBox("Ricerca incrementale")` in the options layout.
+    - Add `self.lbl_mode = QLabel("Modalità: Nuova ricerca")` to indicate current state.
+    - Connect `self.cb_incremental.stateChanged` to update `self.lbl_mode`.
 - **LOGIC UPDATES**:
-    - In `display_results`, set `user_role_data=riga.fattura` for the first column item using `make_item`.
-    - Implement `handle_double_click(self, row, column)` to retrieve the `fattura` object from the row's first item and call `self.open_invoice_detail(fattura)`.
+    - Initialize `self.active_search_steps = []` in `__init__`.
+    - In `perform_search`:
+        - Construct a search step object: `{'words': text.split(), 'code': cb_code.isChecked(), 'desc': cb_desc.isChecked()}`.
+        - If NOT Incremental: `self.active_search_steps = [current_step]`.
+        - If Incremental: `self.active_search_steps.append(current_step)`.
+        - Rebuild the SQLAlchemy query by iterating over `self.active_search_steps`, adding an `AND` filter block for each step (which contains its own `OR` logic for fields).
+- **UX**:
+    - Update the status label to show if it's a filtered subset or a fresh search.
 
 ## Verification Plan
 

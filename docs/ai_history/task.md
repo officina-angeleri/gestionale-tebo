@@ -83,3 +83,7 @@
 - [x] Improve Article Search Interaction <!-- id: 85 -->
     - [x] Add double-click support to search results table <!-- id: 86 -->
     - [x] Store Fattura object in table items for quick access <!-- id: 87 -->
+- [x] Implement Incremental Search <!-- id: 88 -->
+    - [x] Add "Ricerca incrementale" checkbox and mode label <!-- id: 89 -->
+    - [x] Implement search history state `active_search_steps` <!-- id: 90 -->
+    - [x] Update `perform_search` to rebuild query from history <!-- id: 91 -->
