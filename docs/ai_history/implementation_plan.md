@@ -1,38 +1,39 @@
-# Plan: Database Path Management
+# Refinement: Column Resizability and Date Sorting
 
-Allow users to see and change the active database file through the application interface.
+Improve the user experience by ensuring date columns sort chronologically (DD/MM/YYYY display but Year-Month-Day logic) and by making the article description column in search results resizable and persistent.
 
 ## Proposed Changes
 
-### [MainWindow](file:///c:/Users/Simone/.gemini/antigravity/scratch/gestionale-tebo/main.py)
+### [main.py](file:///c:/Users/Simone/.gemini/antigravity/scratch/gestionale-tebo/main.py)
 
-#### [MODIFY] [main.py](file:///c:/Users/Simone/.gemini/antigravity/scratch/gestionale-tebo/main.py)
-- **Initialization**:
-    - Update `MainWindow.__init__` to load `db_path` from `self.prefs` if available.
-- **Dashboard View**:
-    - Add `self.db_info_label` in `setup_dashboard_view` to show the active file.
-    - Update label in `load_stats` to include the current path.
-- **Settings View**:
-    - Add a new "Database" `QGroupBox`.
-    - Add a button "📂 Seleziona Database..." to open `QFileDialog`.
-- **Logic**:
-    - Implement `change_db_path()`:
-        - Opens `QFileDialog` filtering for `.db` files.
-        - If selected, calls `self.reconnect_db(new_path)`.
-    - Implement `reconnect_db(path)`:
-        - Checks if the file exists.
-        - Creates a new `DatabaseManager(path)`.
-        - Updates `self.db_manager`.
-        - Saves the path in `prefs["db_path"]`.
-        - Refreshes stats and current view.
+#### [MODIFY] `ArticleSearchDialog`
+- Change `self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.Stretch)` to `Interactive` or remove it (since line 968 already sets `Interactive`).
+- Implement `_save_column_widths` and `_restore_column_widths` methods, similar to `InvoiceDetailDialog`, but using a different prefs key (e.g., `article_search_widths`).
+- Update `closeEvent` to call `_save_column_widths`.
+- Update `display_results` to use `make_item` for all cells, particularly for the "Data" column, passing the raw `datetime.date` object as `raw_value` and formatting the display text as `DD/MM/YYYY`.
+
+#### [MODIFY] `MainWindow`
+- In `load_table_data`, for the "fatture" section, update the date item to use formatted text `DD/MM/YYYY` while keeping the raw date object for sorting:
+  ```python
+  table.setItem(i, 2, make_item(obj.data.strftime("%d/%m/%Y") if obj.data else "-", raw_value=obj.data))
+  ```
+
+#### [MODIFY] `InvoiceDetailDialog`
+- Ensure any dates (if added in the future or present in headers) follow the same pattern. Currently, it only shows header labels.
+- Verified that `_restore_column_widths` is already called in `load_data`.
 
 ## Verification Plan
 
+### Automated Tests
+- Run `main.py` and:
+  1. Open `Articoli` tab, search for something (or wait till it loads if it's the main view).
+  2. Open an Invoice Detail -> Check sorting of rows (though rows don't have dates).
+  3. Open `Fatture` tab -> Click on "Data" header -> Verify chronological sorting.
+  4. Open `Ricerca Articolo` (presumably a button in Settings or Dashboard? I should find the trigger).
+     - Search for an article.
+     - Try resizing "Descrizione Articolo" column.
+     - Close and reopen -> Width should be preserved.
+     - Click on "Data" header in search results -> Verify chronological sorting.
+
 ### Manual Verification
-- **Path Display**: Verify the current path is visible on the Dashboard.
-- **Change Path**:
-    1. Go to Settings -> Change Database.
-    2. Select a different `.db` file (e.g. a backup).
-    3. Verify Dashboard shows the new path and stats update accordingly.
-- **Error Handling**: Try selecting a non-database file (if filter allows) or verify behavior if file is missing.
-- **Persistence**: Restart the app and verify it connects to the last selected database.
+- Confirm with user that "DD/MM/YYYY" is the preferred display format for all dates.

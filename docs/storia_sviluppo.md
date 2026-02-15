@@ -223,6 +223,14 @@ gestionale-tebo/
 
 ---
 
+### Session 12 — 15 Febbraio 2026
+**Obiettivo**: Perfezionamento UI e Ordinamento.
+- **Ricerca Articolo**: Resa ridimensionabile la colonna "Descrizione Articolo" e implementata la persistenza delle larghezze delle colonne (`article_search_widths`).
+- **Ordinamento Cronologico**: Corretto l'ordinamento della colonna **Data** in tutte le viste (Fatture, Ricerca Articoli, ecc.). Ora l'ordinamento avviene su oggetti `date` reali invece che su stringhe, garantendo la corretta sequenza temporale.
+- **Interfaccia**: Uniformato l'uso di `make_item` per tutte le celle per supportare l'ordinamento intelligente.
+
+---
+
 ## 9. Prompt Principali Usati
 
 > "Rinomina la sezione Vendite in Fatture... raggruppabili per fattura... doppio clic visualizza dettaglio."

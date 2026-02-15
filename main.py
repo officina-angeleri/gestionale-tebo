@@ -965,14 +965,17 @@ class ArticleSearchDialog(QDialog):
             "Fattura", "Data", "Cliente", "Cod. Cli", "Cod. Art.",
             "Descrizione Articolo", "Q.tà", "Prezzo", "Totale", "Azioni"
         ])
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
-        self.table.horizontalHeader().setStretchLastSection(False)
-        self.table.horizontalHeader().setSectionsMovable(True)
-        self.table.horizontalHeader().sectionMoved.connect(lambda: save_column_order(self.table, "article_search"))
-        self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.Stretch)
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.Interactive)
+        header.setStretchLastSection(False)
+        header.setSectionsMovable(True)
+        header.sectionMoved.connect(lambda: save_column_order(self.table, "article_search"))
         self.table.setStyleSheet("QTableWidget { gridline-color: #333; }")
         layout.addWidget(self.table)
+        
+        # Load column order and widths
         restore_column_order(self.table, "article_search")
+        self._restore_column_widths()
         
         footer = QHBoxLayout()
         self.status_label = QLabel("Inserisci i termini di ricerca (logica AND) e premi Invio. Usa % per 'contiene'.")
@@ -1016,17 +1019,17 @@ class ArticleSearchDialog(QDialog):
             self.table.insertRow(row)
             
             # Invoice Info
-            self.table.setItem(row, 0, QTableWidgetItem(str(riga.fattura.numero)))
-            self.table.setItem(row, 1, QTableWidgetItem(riga.fattura.data.strftime("%d/%m/%Y") if riga.fattura.data else "-"))
-            self.table.setItem(row, 2, QTableWidgetItem(riga.fattura.cliente_denominazione))
-            self.table.setItem(row, 3, QTableWidgetItem(riga.fattura.cliente_codice or "-"))
+            self.table.setItem(row, 0, make_item(riga.fattura.numero))
+            self.table.setItem(row, 1, make_item(riga.fattura.data.strftime("%d/%m/%Y") if riga.fattura.data else "-", raw_value=riga.fattura.data))
+            self.table.setItem(row, 2, make_item(riga.fattura.cliente_denominazione))
+            self.table.setItem(row, 3, make_item(riga.fattura.cliente_codice or "-"))
             
             # Item Info
-            self.table.setItem(row, 4, QTableWidgetItem(riga.articolo_codice or "-"))
-            self.table.setItem(row, 5, QTableWidgetItem(riga.descrizione))
-            self.table.setItem(row, 6, QTableWidgetItem(f"{riga.quantita:.2f}" if riga.quantita is not None else "0.00"))
-            self.table.setItem(row, 7, QTableWidgetItem(f"{riga.prezzo_unitario:.2f} €" if riga.prezzo_unitario is not None else "0.00 €"))
-            self.table.setItem(row, 8, QTableWidgetItem(f"{riga.totale_riga:.2f} €" if riga.totale_riga is not None else "0.00 €"))
+            self.table.setItem(row, 4, make_item(riga.articolo_codice or "-"))
+            self.table.setItem(row, 5, make_item(riga.descrizione))
+            self.table.setItem(row, 6, make_item(f"{riga.quantita:.2f}" if riga.quantita is not None else "0.00", raw_value=riga.quantita))
+            self.table.setItem(row, 7, make_item(f"{riga.prezzo_unitario:.2f} €" if riga.prezzo_unitario is not None else "0.00 €", raw_value=riga.prezzo_unitario))
+            self.table.setItem(row, 8, make_item(f"{riga.totale_riga:.2f} €" if riga.totale_riga is not None else "0.00 €", raw_value=riga.totale_riga))
             
             # Action Button
             btn_detail = QPushButton("Dettaglio Fattura")
@@ -1037,6 +1040,32 @@ class ArticleSearchDialog(QDialog):
             self.table.setCellWidget(row, 9, btn_detail)
         
         self.table.setSortingEnabled(True)
+
+    def _save_column_widths(self):
+        """Save current column widths for article search."""
+        prefs = load_column_prefs()
+        widths = [self.table.columnWidth(i) for i in range(self.table.columnCount())]
+        prefs["article_search_widths"] = widths
+        save_column_prefs(prefs)
+
+    def _restore_column_widths(self):
+        """Restore saved column widths for article search."""
+        prefs = load_column_prefs()
+        widths = prefs.get("article_search_widths")
+        if widths and len(widths) == self.table.columnCount():
+            for i, w in enumerate(widths):
+                self.table.setColumnWidth(i, w)
+        else:
+            # Default reasonable widths
+            defaults = [80, 100, 200, 80, 120, 300, 80, 100, 100, 120]
+            for i, w in enumerate(defaults):
+                if i < self.table.columnCount():
+                    self.table.setColumnWidth(i, w)
+
+    def closeEvent(self, event):
+        """Save column widths on close."""
+        self._save_column_widths()
+        super().closeEvent(event)
 
     def open_invoice_detail(self, fattura):
         dialog = InvoiceDetailDialog(fattura, self.parent())
@@ -1510,7 +1539,7 @@ class MainWindow(QMainWindow):
                 elif type_key == "fatture":
                     table.setItem(i, 0, make_item(obj.id, user_role_data=obj.id))
                     table.setItem(i, 1, make_item(obj.numero))
-                    table.setItem(i, 2, make_item(obj.data))
+                    table.setItem(i, 2, make_item(obj.data.strftime("%d/%m/%Y") if obj.data else "-", raw_value=obj.data))
                     table.setItem(i, 3, make_item(obj.cliente_codice or ""))
                     table.setItem(i, 4, make_item(obj.cliente_denominazione or ""))
                     table.setItem(i, 5, make_item(obj.causale or ""))

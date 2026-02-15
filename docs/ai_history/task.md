@@ -73,3 +73,7 @@
     - [x] Add DB selector in Settings tab <!-- id: 75 -->
     - [x] Implement dynamic DB reconnection and persistence <!-- id: 76 -->
     - [x] Add validation for new DB files <!-- id: 77 -->
+- [x] UI Refinements and sorting <!-- id: 78 -->
+    - [x] Make "Descrizione Articolo" resizable in ArticleSearchDialog <!-- id: 79 -->
+    - [x] Implement persistent column widths for ArticleSearchDialog <!-- id: 80 -->
+    - [x] Fix chronological date sorting across all tables <!-- id: 81 -->
