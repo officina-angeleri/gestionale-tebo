@@ -1299,8 +1299,7 @@ class MainWindow(QMainWindow):
         top_bar = QHBoxLayout()
         display_name = "Fatture Clienti" if type_key == "fatture" else type_key.capitalize()
         title = QLabel(display_name)
-        title.setFixedWidth(100)
-        title.setStyleSheet("font-size: 20px; font-weight: bold; color: #00bcd4;")
+        title.setStyleSheet("font-size: 20px; font-weight: bold; color: #00bcd4; margin-right: 15px;")
         top_bar.addWidget(title)
         
         search = QLineEdit()
