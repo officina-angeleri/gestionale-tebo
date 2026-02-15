@@ -15,6 +15,8 @@ import base64
 import subprocess
 import winreg
 from io import BytesIO
+from sqlalchemy import or_, and_, extract
+from sqlalchemy.orm import joinedload
 
 # Path for column preferences file
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -36,6 +38,30 @@ def save_column_prefs(prefs):
     """Save column visibility preferences to JSON file."""
     with open(COLUMN_PREFS_FILE, 'w', encoding='utf-8') as f:
         json.dump(prefs, f, indent=2, ensure_ascii=False)
+
+
+def save_column_order(table, key):
+    """Save the visual order of columns for a specific table key."""
+    header = table.horizontalHeader()
+    count = header.count()
+    order = [header.logicalIndex(v) for v in range(count)]
+    
+    prefs = load_column_prefs()
+    prefs[f"order_{key}"] = order
+    save_column_prefs(prefs)
+
+
+def restore_column_order(table, key):
+    """Restore the visual order of columns from preferences."""
+    prefs = load_column_prefs()
+    order = prefs.get(f"order_{key}")
+    if not order or len(order) != table.columnCount():
+        return
+        
+    header = table.horizontalHeader()
+    # To restore correctly, we move each logical section to its visual index
+    for v, logical_idx in enumerate(order):
+        header.moveSection(header.visualIndex(logical_idx), v)
 
 
 class ColumnConfigDialog(QDialog):
@@ -107,52 +133,66 @@ def make_item(display_text, raw_value=None, user_role_data=None):
     return item
 
 
-class InvoiceDialog(QDialog):
+class InvoiceDetailDialog(QDialog):
     """Summary dialog for an invoice."""
     DETAIL_HEADERS = ["UM", "Codice", "Descrizione", "Quantità", "Prezzo Unit.", "Totale Riga"]
     PREFS_KEY = "invoice_detail_widths"
 
-    def __init__(self, fattura, parent=None):
+    def __init__(self, fattura_or_id, parent=None):
         super().__init__(parent)
-        self.setWindowTitle(f"Fattura n. {fattura.numero} del {fattura.data}")
+        self.main_win = parent
+        while self.main_win and not hasattr(self.main_win, 'db_manager'):
+            self.main_win = self.main_win.parent()
+
+        # Handle both object and ID for flexibility
+        if isinstance(fattura_or_id, int):
+            self.fattura_id = fattura_or_id
+            self.fattura = None
+        else:
+            self.fattura = fattura_or_id
+            self.fattura_id = fattura_or_id.id
+
+        self.setWindowTitle(f"Fattura n. ... Caricamento...")
         self.resize(900, 600)
-        self.fattura = fattura
         self.setup_ui()
+        self.load_data()
 
     def setup_ui(self):
         layout = QVBoxLayout(self)
 
         # Header Details
-        info_group = QGroupBox("Dati Fattura")
-        info_layout = QFormLayout(info_group)
-        info_layout.addRow("Numero:", QLabel(str(self.fattura.numero)))
-        info_layout.addRow("Data:", QLabel(str(self.fattura.data)))
+        self.info_group = QGroupBox("Dati Fattura")
+        self.info_layout = QFormLayout(self.info_group)
+        self.lbl_num = QLabel("-")
+        self.lbl_data = QLabel("-")
+        self.lbl_cli = QLabel("-")
+        self.lbl_caus = QLabel("-")
         
-        # Cliente
-        cliente_str = self.fattura.cliente_denominazione or self.fattura.cliente_codice or "-"
-        info_layout.addRow("Cliente:", QLabel(cliente_str))
-        info_layout.addRow("Causale:", QLabel(self.fattura.causale or "-"))
+        self.info_layout.addRow("Numero:", self.lbl_num)
+        self.info_layout.addRow("Data:", self.lbl_data)
+        self.info_layout.addRow("Cliente:", self.lbl_cli)
+        self.info_layout.addRow("Causale:", self.lbl_caus)
         
-        layout.addWidget(info_group)
+        layout.addWidget(self.info_group)
 
         # Rows Table
         self.table = QTableWidget()
         self.table.setColumnCount(len(self.DETAIL_HEADERS))
         self.table.setHorizontalHeaderLabels(self.DETAIL_HEADERS)
-        # Allow manual resizing - Interactive mode instead of ResizeToContents
+        self.table.horizontalHeader().setSectionsMovable(True)
+        self.table.horizontalHeader().sectionMoved.connect(lambda: save_column_order(self.table, "invoice_detail"))
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.setSortingEnabled(True)
-        self.load_rows()
-        self._restore_column_widths()
         layout.addWidget(self.table)
+        restore_column_order(self.table, "invoice_detail")
 
         # Footer Total
         footer_layout = QHBoxLayout()
         footer_layout.addStretch()
-        lbl_tot = QLabel(f"TOTALE FATTURA: € {self.fattura.totale:.2f}")
-        lbl_tot.setStyleSheet("font-size: 18px; font-weight: bold; color: #00bcd4;")
-        footer_layout.addWidget(lbl_tot)
+        self.lbl_tot = QLabel("TOTALE FATTURA: € 0.00")
+        self.lbl_tot.setStyleSheet("font-size: 18px; font-weight: bold; color: #00bcd4;")
+        footer_layout.addWidget(self.lbl_tot)
         
         # Action Buttons
         btn_layout = QHBoxLayout()
@@ -164,20 +204,42 @@ class InvoiceDialog(QDialog):
         layout.addLayout(footer_layout)
         layout.addLayout(btn_layout)
 
-    def jump_to_client(self):
-        # Access MainWindow's method through parent
-        main_win = self.parent()
-        while main_win and not hasattr(main_win, 'open_client_by_code'):
-            main_win = main_win.parent()
+    def load_data(self):
+        """Fetch fresh data in a new session to avoid DetachedInstanceError."""
+        if not self.main_win: return
         
-        if main_win:
-            # Pass both code and denomination for robust search
-            main_win.open_client_by_code(
+        session = self.main_win.db_manager.get_session()
+        try:
+            # Eager load righe and their articoli for efficiency and safety
+            self.fattura = session.get(Fattura, self.fattura_id, options=[
+                joinedload(Fattura.righe).joinedload(RigaFattura.articolo)
+            ])
+            
+            if self.fattura:
+                self.setWindowTitle(f"Fattura n. {self.fattura.numero} del {self.fattura.data}")
+                self.lbl_num.setText(str(self.fattura.numero))
+                self.lbl_data.setText(str(self.fattura.data))
+                self.lbl_cli.setText(self.fattura.cliente_denominazione or self.fattura.cliente_codice or "-")
+                self.lbl_caus.setText(self.fattura.causale or "-")
+                self.lbl_tot.setText(f"TOTALE FATTURA: € {self.fattura.totale:.2f}")
+                
+                self.load_rows()
+                self._restore_column_widths()
+        except Exception as e:
+            print(f"Error loading invoice detail: {e}")
+        finally:
+            session.close()
+
+    def jump_to_client(self):
+        # Pass both code and denomination for robust search
+        if self.main_win:
+            self.main_win.open_client_by_code(
                 self.fattura.cliente_codice, 
                 self.fattura.cliente_denominazione
             )
 
     def load_rows(self):
+        if not self.fattura: return
         righe = self.fattura.righe
         self.table.setRowCount(len(righe))
         for i, r in enumerate(righe):
@@ -457,10 +519,13 @@ class ClientInvoicesDialog(QDialog):
         headers = ["Numero", "Data", "Causale", "Totale", "Azioni"]
         self.table.setColumnCount(len(headers))
         self.table.setHorizontalHeaderLabels(headers)
+        self.table.horizontalHeader().setSectionsMovable(True)
+        self.table.horizontalHeader().sectionMoved.connect(lambda: save_column_order(self.table, "client_invoices"))
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.setSortingEnabled(True)
+        restore_column_order(self.table, "client_invoices")
         
         self.table.setRowCount(len(self.invoices))
         for i, inv in enumerate(self.invoices):
@@ -513,7 +578,7 @@ class ClientInvoicesDialog(QDialog):
                 session = main_win.db_manager.get_session()
                 fattura = session.get(Fattura, inv_id)
                 if fattura:
-                    main_win.show_detail_window(f"invoice_{inv_id}", InvoiceDialog, fattura)
+                    main_win.show_detail_window(f"invoice_{inv_id}", InvoiceDetailDialog, fattura)
                 session.close()
 
     def handle_click(self, row, col):
@@ -853,6 +918,130 @@ class ArticleDetailDialog(QDialog):
             self.parent().remove_detail_window(f"articolo_{self.articolo.id}")
         super().closeEvent(event)
 
+
+class ArticleSearchDialog(QDialog):
+    """Dialog for searching items across all invoice lines."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Ricerca Articolo nelle Fatture")
+        self.setMinimumSize(1100, 700)
+        self.setup_ui()
+
+    def setup_ui(self):
+        layout = QVBoxLayout(self)
+        
+        # Search input
+        search_layout = QHBoxLayout()
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("Cerca articoli (es: %mixer %statico %blu)...")
+        self.search_input.setFixedHeight(45)
+        self.search_input.setStyleSheet("font-size: 16px; padding-left: 10px; border: 1px solid #00bcd4; border-radius: 5px;")
+        self.search_input.returnPressed.connect(self.perform_search)
+        search_layout.addWidget(self.search_input)
+        
+        btn_search = QPushButton("CERCA")
+        btn_search.setFixedHeight(45)
+        btn_search.setFixedWidth(120)
+        btn_search.setCursor(Qt.PointingHandCursor)
+        btn_search.setStyleSheet("""
+            QPushButton {
+                background-color: #00bcd4;
+                color: white;
+                font-weight: bold;
+                font-size: 14px;
+                border-radius: 5px;
+            }
+            QPushButton:hover {
+                background-color: #00acc1;
+            }
+        """)
+        btn_search.clicked.connect(self.perform_search)
+        search_layout.addWidget(btn_search)
+        layout.addLayout(search_layout)
+        
+        self.table = QTableWidget()
+        self.table.setColumnCount(10)
+        self.table.setHorizontalHeaderLabels([
+            "Fattura", "Data", "Cliente", "Cod. Cli", "Cod. Art.",
+            "Descrizione Articolo", "Q.tà", "Prezzo", "Totale", "Azioni"
+        ])
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        self.table.horizontalHeader().setStretchLastSection(False)
+        self.table.horizontalHeader().setSectionsMovable(True)
+        self.table.horizontalHeader().sectionMoved.connect(lambda: save_column_order(self.table, "article_search"))
+        self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.Stretch)
+        self.table.setStyleSheet("QTableWidget { gridline-color: #333; }")
+        layout.addWidget(self.table)
+        restore_column_order(self.table, "article_search")
+        
+        footer = QHBoxLayout()
+        self.status_label = QLabel("Inserisci i termini di ricerca (logica AND) e premi Invio. Usa % per 'contiene'.")
+        self.status_label.setStyleSheet("color: #888; font-style: italic;")
+        footer.addWidget(self.status_label)
+        
+        layout.addLayout(footer)
+
+    def perform_search(self):
+        text = self.search_input.text().strip()
+        if not text: return
+        
+        words = text.split()
+        session = self.parent().db_manager.get_session()
+        try:
+            from database import RigaFattura, Fattura
+            query = session.query(RigaFattura).join(Fattura)
+            
+            conditions = []
+            for word in words:
+                pattern = word if '%' in word else f"%{word}%"
+                cond = or_(
+                    RigaFattura.descrizione.ilike(pattern),
+                    RigaFattura.articolo_codice.ilike(pattern)
+                )
+                conditions.append(cond)
+                
+            results = query.filter(and_(*conditions)).order_by(Fattura.data.desc(), Fattura.numero.desc()).all()
+            
+            self.display_results(results)
+            self.status_label.setText(f"Trovate {len(results)} righe corrispondenti.")
+        except Exception as e:
+            self.status_label.setText(f"Errore durante la ricerca: {e}")
+        finally:
+            session.close()
+
+    def display_results(self, results):
+        self.table.setRowCount(0)
+        self.table.setSortingEnabled(False)
+        for row, riga in enumerate(results):
+            self.table.insertRow(row)
+            
+            # Invoice Info
+            self.table.setItem(row, 0, QTableWidgetItem(str(riga.fattura.numero)))
+            self.table.setItem(row, 1, QTableWidgetItem(riga.fattura.data.strftime("%d/%m/%Y") if riga.fattura.data else "-"))
+            self.table.setItem(row, 2, QTableWidgetItem(riga.fattura.cliente_denominazione))
+            self.table.setItem(row, 3, QTableWidgetItem(riga.fattura.cliente_codice or "-"))
+            
+            # Item Info
+            self.table.setItem(row, 4, QTableWidgetItem(riga.articolo_codice or "-"))
+            self.table.setItem(row, 5, QTableWidgetItem(riga.descrizione))
+            self.table.setItem(row, 6, QTableWidgetItem(f"{riga.quantita:.2f}" if riga.quantita is not None else "0.00"))
+            self.table.setItem(row, 7, QTableWidgetItem(f"{riga.prezzo_unitario:.2f} €" if riga.prezzo_unitario is not None else "0.00 €"))
+            self.table.setItem(row, 8, QTableWidgetItem(f"{riga.totale_riga:.2f} €" if riga.totale_riga is not None else "0.00 €"))
+            
+            # Action Button
+            btn_detail = QPushButton("Dettaglio Fattura")
+            btn_detail.setCursor(Qt.PointingHandCursor)
+            btn_detail.setStyleSheet("background: #444; color: white; border: none; padding: 5px; border-radius: 3px;")
+            # Capture fattura explicitly
+            btn_detail.clicked.connect(lambda _, f=riga.fattura: self.open_invoice_detail(f))
+            self.table.setCellWidget(row, 9, btn_detail)
+        
+        self.table.setSortingEnabled(True)
+
+    def open_invoice_detail(self, fattura):
+        dialog = InvoiceDetailDialog(fattura, self.parent())
+        dialog.exec()
+
 class MainWindow(QMainWindow):
     def __init__(self, db_manager):
         super().__init__()
@@ -1002,6 +1191,7 @@ class MainWindow(QMainWindow):
         self.nav_btns.append(btn)
         return btn
 
+
     def switch_view(self, index):
         self.stack.setCurrentIndex(index)
         for i, btn in enumerate(self.nav_btns):
@@ -1086,6 +1276,25 @@ class MainWindow(QMainWindow):
             d_end.setObjectName(f"filter_dend_{type_key}")
             d_end.dateChanged.connect(lambda d: self.filter_table(type_key, search.text()))
             top_bar.addWidget(d_end)
+            
+            # Article Search Button
+            btn_search_art = QPushButton("🔍 Ricerca Articolo")
+            btn_search_art.setCursor(Qt.PointingHandCursor)
+            btn_search_art.setStyleSheet("""
+                QPushButton {
+                    background-color: #00bcd4;
+                    color: white;
+                    font-weight: bold;
+                    padding: 0 15px;
+                    border-radius: 4px;
+                }
+                QPushButton:hover {
+                    background-color: #00acc1;
+                }
+            """)
+            btn_search_art.setFixedHeight(30)
+            btn_search_art.clicked.connect(self.open_article_search)
+            top_bar.addWidget(btn_search_art)
 
         # Column config button
         btn_config = QPushButton("⚙")
@@ -1103,6 +1312,8 @@ class MainWindow(QMainWindow):
         table.setSelectionBehavior(QTableWidget.SelectRows)
         table.setEditTriggers(QTableWidget.NoEditTriggers)
         table.horizontalHeader().setStretchLastSection(True)
+        table.horizontalHeader().setSectionsMovable(True)
+        table.horizontalHeader().sectionMoved.connect(lambda: save_column_order(table, type_key))
         table.setSortingEnabled(True)
         table.setObjectName(f"table_{type_key}")
         
@@ -1121,6 +1332,10 @@ class MainWindow(QMainWindow):
 
         layout.addWidget(table)
         self.stack.addWidget(page)
+
+    def open_article_search(self):
+        dialog = ArticleSearchDialog(self)
+        dialog.exec()
 
     def setup_settings_view(self):
         page = QWidget()
@@ -1216,6 +1431,7 @@ class MainWindow(QMainWindow):
         all_cols = self.TABLE_COLUMNS[type_key]
         table.setColumnCount(len(all_cols))
         table.setHorizontalHeaderLabels(all_cols)
+        restore_column_order(table, type_key)
         
         for i, col in enumerate(all_cols):
             table.setColumnHidden(i, col not in visible_cols)
@@ -1335,7 +1551,7 @@ class MainWindow(QMainWindow):
         try:
             fattura = session.get(Fattura, inv_id)
             if fattura:
-                self.show_detail_window(f"invoice_{inv_id}", InvoiceDialog, fattura)
+                self.show_detail_window(f"invoice_{inv_id}", InvoiceDetailDialog, fattura)
             else:
                 QMessageBox.warning(self, "Errore", "Fattura non trovata.")
         except Exception as e:
