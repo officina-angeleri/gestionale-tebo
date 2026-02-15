@@ -1,26 +1,38 @@
-# Refinement: Column Resizability and Date Sorting
+# Refinement: Column Resizability, Date Sorting, and Search Fields
 
-Improve the user experience by ensuring date columns sort chronologically (DD/MM/YYYY display but Year-Month-Day logic) and by making the article description column in search results resizable and persistent.
+Improve the user experience by ensuring date columns sort chronologically, making the article search results columns resizable, and allowing field selection in the article search.
 
 ## Proposed Changes
 
 ### [main.py](file:///c:/Users/Simone/.gemini/antigravity/scratch/gestionale-tebo/main.py)
 
+#### [MODIFY] Imports
+- Add `QCheckBox` to `PySide6.QtWidgets` imports.
+
 #### [MODIFY] `ArticleSearchDialog`
-- Change `self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.Stretch)` to `Interactive` or remove it (since line 968 already sets `Interactive`).
-- Implement `_save_column_widths` and `_restore_column_widths` methods, similar to `InvoiceDetailDialog`, but using a different prefs key (e.g., `article_search_widths`).
-- Update `closeEvent` to call `_save_column_widths`.
-- Update `display_results` to use `make_item` for all cells, particularly for the "Data" column, passing the raw `datetime.date` object as `raw_value` and formatting the display text as `DD/MM/YYYY`.
+- **UI UPDATES**:
+    - Add `self.cb_code = QCheckBox("Codice articolo")` and `self.cb_desc = QCheckBox("Descrizione articolo")`.
+    - Set both to `Checked` by default.
+    - Add them to a horizontal layout below the search bar.
+- **LOGIC UPDATES**:
+    - Modify `perform_search` to build `conditions` based on checkbox states.
+    - If `cb_code` is checked, include `articolo_codice` in the `or_` for each word.
+    - If `cb_desc` is checked, include `descrizione` in the `or_` for each word.
+    - If neither is checked, default to searching both (effectively treating it as both checked).
 
-#### [MODIFY] `MainWindow`
-- In `load_table_data`, for the "fatture" section, update the date item to use formatted text `DD/MM/YYYY` while keeping the raw date object for sorting:
-  ```python
-  table.setItem(i, 2, make_item(obj.data.strftime("%d/%m/%Y") if obj.data else "-", raw_value=obj.data))
-  ```
+## Verification Plan
 
-#### [MODIFY] `InvoiceDetailDialog`
-- Ensure any dates (if added in the future or present in headers) follow the same pattern. Currently, it only shows header labels.
-- Verified that `_restore_column_widths` is already called in `load_data`.
+### Automated Tests
+- Run `main.py` and:
+  1. Open `Ricerca Articolo` (Magnifying glass in Fatture list or similar).
+  2. Test search with only "Codice articolo" checked (e.g., search for a known code).
+  3. Test search with only "Descrizione articolo" checked (e.g., search for a common word like "Vite").
+  4. Test with both checked.
+  5. Test with neither checked (should behave like both checked).
+  6. Verify that column widths and sorting still work as before.
+
+### Manual Verification
+- Confirm that the UI for field selection is compact and clear.
 
 ## Verification Plan
 

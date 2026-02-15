@@ -3,7 +3,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QTableWidgetItem, QHeaderView, QLineEdit, QFrame, 
                              QMessageBox, QStackedWidget, QGridLayout, QComboBox,
                              QFormLayout, QGroupBox, QStatusBar, QDialog, QFileDialog,
-                             QDateEdit)
+                             QDateEdit, QCheckBox)
 from PySide6.QtCore import Qt, QSize, QDate, QUrl
 from PySide6.QtGui import QFont, QAction, QColor, QPixmap, QIcon, QDesktopServices
 from database import DatabaseManager, Cliente, Fornitore, Articolo, Fattura, RigaFattura
@@ -959,6 +959,19 @@ class ArticleSearchDialog(QDialog):
         search_layout.addWidget(btn_search)
         layout.addLayout(search_layout)
         
+        # Search field options
+        options_layout = QHBoxLayout()
+        self.cb_code = QCheckBox("Codice articolo")
+        self.cb_desc = QCheckBox("Descrizione articolo")
+        self.cb_code.setChecked(True)
+        self.cb_desc.setChecked(True)
+        self.cb_code.setStyleSheet("font-weight: bold; color: #00bcd4;")
+        self.cb_desc.setStyleSheet("font-weight: bold; color: #00bcd4;")
+        options_layout.addWidget(self.cb_code)
+        options_layout.addWidget(self.cb_desc)
+        options_layout.addStretch()
+        layout.addLayout(options_layout)
+        
         self.table = QTableWidget()
         self.table.setColumnCount(10)
         self.table.setHorizontalHeaderLabels([
@@ -994,14 +1007,24 @@ class ArticleSearchDialog(QDialog):
             from database import RigaFattura, Fattura
             query = session.query(RigaFattura).join(Fattura)
             
+            search_code = self.cb_code.isChecked()
+            search_desc = self.cb_desc.isChecked()
+            
+            # Default to both if none selected
+            if not search_code and not search_desc:
+                search_code = True
+                search_desc = True
+
             conditions = []
             for word in words:
                 pattern = word if '%' in word else f"%{word}%"
-                cond = or_(
-                    RigaFattura.descrizione.ilike(pattern),
-                    RigaFattura.articolo_codice.ilike(pattern)
-                )
-                conditions.append(cond)
+                field_filters = []
+                if search_desc:
+                    field_filters.append(RigaFattura.descrizione.ilike(pattern))
+                if search_code:
+                    field_filters.append(RigaFattura.articolo_codice.ilike(pattern))
+                
+                conditions.append(or_(*field_filters))
                 
             results = query.filter(and_(*conditions)).order_by(Fattura.data.desc(), Fattura.numero.desc()).all()
             

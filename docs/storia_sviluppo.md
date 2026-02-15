@@ -231,6 +231,14 @@ gestionale-tebo/
 
 ---
 
+### Session 13 — 15 Febbraio 2026
+**Obiettivo**: Affinamento Ricerca Articoli.
+- **Selezione Campi**: Aggiunte checkbox nella `ArticleSearchDialog` per permettere all'utente di scegliere se cercare per "Codice articolo", "Descrizione articolo" o entrambi.
+- **Logica di Ricerca**: Aggiornato il metodo `perform_search` per costruire dinamicamente i filtri SQL (OR logico tra i campi selezionati) in base alle preferenze dell'utente.
+- **Default**: Se nessun campo è selezionato, la ricerca avviene automaticamente su entrambi per garantire risultati immediati.
+
+---
+
 ## 9. Prompt Principali Usati
 
 > "Rinomina la sezione Vendite in Fatture... raggruppabili per fattura... doppio clic visualizza dettaglio."

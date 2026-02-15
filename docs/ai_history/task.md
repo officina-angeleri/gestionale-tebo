@@ -77,3 +77,6 @@
     - [x] Make "Descrizione Articolo" resizable in ArticleSearchDialog <!-- id: 79 -->
     - [x] Implement persistent column widths for ArticleSearchDialog <!-- id: 80 -->
     - [x] Fix chronological date sorting across all tables <!-- id: 81 -->
+- [x] Refine Article Search Fields <!-- id: 82 -->
+    - [x] Add checkboxes for "Codice articolo" and "Descrizione articolo" <!-- id: 83 -->
+    - [x] Update search logic to respect field selection <!-- id: 84 -->
