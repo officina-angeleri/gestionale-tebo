@@ -89,10 +89,13 @@ class Fattura(Base):
     __tablename__ = 'fatture'
 
     id = Column(Integer, primary_key=True)
+    tipo = Column(String, default='VENDITA') # 'VENDITA' o 'ACQUISTO'
     numero = Column(Integer)  # 'Nr Fat'
     data = Column(Date)       # 'Data Fat'
     cliente_codice = Column(String, nullable=True)  # 'Codice Cli' - no FK for now
     cliente_denominazione = Column(String)  # 'Descrizione cliente' - text from Excel
+    fornitore_codice = Column(String, nullable=True)
+    fornitore_denominazione = Column(String, nullable=True)
     totale = Column(Float, default=0.0)
     causale = Column(String) # 'Desc. Causale'
 

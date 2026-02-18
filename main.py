@@ -170,7 +170,10 @@ class InvoiceDetailDialog(QDialog):
         
         self.info_layout.addRow("Numero:", self.lbl_num)
         self.info_layout.addRow("Data:", self.lbl_data)
-        self.info_layout.addRow("Cliente:", self.lbl_cli)
+        
+        # Dynamic label for Cliente/Fornitore
+        self.lbl_cli_forn_tag = QLabel("Cliente/Fornitore:")
+        self.info_layout.addRow(self.lbl_cli_forn_tag, self.lbl_cli)
         self.info_layout.addRow("Causale:", self.lbl_caus)
         
         layout.addWidget(self.info_group)
@@ -196,9 +199,9 @@ class InvoiceDetailDialog(QDialog):
         
         # Action Buttons
         btn_layout = QHBoxLayout()
-        btn_client = QPushButton("👤 Vedi Cliente")
-        btn_client.clicked.connect(self.jump_to_client)
-        btn_layout.addWidget(btn_client)
+        self.btn_jump = QPushButton("👤 Vedi Dettaglio")
+        self.btn_jump.clicked.connect(self.jump_to_entity)
+        btn_layout.addWidget(self.btn_jump)
         btn_layout.addStretch()
         
         layout.addLayout(footer_layout)
@@ -219,7 +222,16 @@ class InvoiceDetailDialog(QDialog):
                 self.setWindowTitle(f"Fattura n. {self.fattura.numero} del {self.fattura.data}")
                 self.lbl_num.setText(str(self.fattura.numero))
                 self.lbl_data.setText(str(self.fattura.data))
-                self.lbl_cli.setText(self.fattura.cliente_denominazione or self.fattura.cliente_codice or "-")
+                
+                if self.fattura.tipo == 'ACQUISTO':
+                    self.lbl_cli_forn_tag.setText("Fornitore:")
+                    self.lbl_cli.setText(self.fattura.fornitore_denominazione or self.fattura.fornitore_codice or "-")
+                    self.btn_jump.setText("📦 Vedi Fornitore")
+                else:
+                    self.lbl_cli_forn_tag.setText("Cliente:")
+                    self.lbl_cli.setText(self.fattura.cliente_denominazione or self.fattura.cliente_codice or "-")
+                    self.btn_jump.setText("👤 Vedi Cliente")
+                    
                 self.lbl_caus.setText(self.fattura.causale or "-")
                 self.lbl_tot.setText(f"TOTALE FATTURA: € {self.fattura.totale:.2f}")
                 
@@ -230,13 +242,19 @@ class InvoiceDetailDialog(QDialog):
         finally:
             session.close()
 
-    def jump_to_client(self):
+    def jump_to_entity(self):
         # Pass both code and denomination for robust search
-        if self.main_win:
-            self.main_win.open_client_by_code(
-                self.fattura.cliente_codice, 
-                self.fattura.cliente_denominazione
-            )
+        if self.main_win and self.fattura:
+            if self.fattura.tipo == 'ACQUISTO':
+                self.main_win.open_supplier_by_code(
+                    self.fattura.fornitore_codice, 
+                    self.fattura.fornitore_denominazione
+                )
+            else:
+                self.main_win.open_client_by_code(
+                    self.fattura.cliente_codice, 
+                    self.fattura.cliente_denominazione
+                )
 
     def load_rows(self):
         if not self.fattura: return
@@ -1274,6 +1292,7 @@ class MainWindow(QMainWindow):
         self.btn_fornitori = self.create_nav_btn("Fornitori")
         self.btn_articoli = self.create_nav_btn("Articoli")
         self.btn_fatture = self.create_nav_btn("Fatture Clienti")
+        self.btn_fatture_fornitori = self.create_nav_btn("Fatture Fornitori", highlight=True)
         self.btn_settings = self.create_nav_btn("Impostazioni")
         
         sidebar_layout.addWidget(self.btn_dashboard)
@@ -1281,6 +1300,7 @@ class MainWindow(QMainWindow):
         sidebar_layout.addWidget(self.btn_fornitori)
         sidebar_layout.addWidget(self.btn_articoli)
         sidebar_layout.addWidget(self.btn_fatture)
+        sidebar_layout.addWidget(self.btn_fatture_fornitori)
         sidebar_layout.addStretch()
         sidebar_layout.addWidget(self.btn_settings)
 
@@ -1295,6 +1315,7 @@ class MainWindow(QMainWindow):
         self.setup_table_view("fornitori")
         self.setup_table_view("articoli")
         self.setup_table_view("fatture")
+        self.setup_table_view("fatture_fornitori")
         self.setup_settings_view()
 
         # Events - Connections
@@ -1303,7 +1324,8 @@ class MainWindow(QMainWindow):
         self.btn_fornitori.clicked.connect(lambda: self.switch_view(2))
         self.btn_articoli.clicked.connect(lambda: self.switch_view(3))
         self.btn_fatture.clicked.connect(lambda: self.switch_view(4))
-        self.btn_settings.clicked.connect(lambda: self.switch_view(5))
+        self.btn_fatture_fornitori.clicked.connect(lambda: self.switch_view(5))
+        self.btn_settings.clicked.connect(lambda: self.switch_view(6))
 
         # Status Bar
         self.statusBar = QStatusBar()
@@ -1331,7 +1353,8 @@ class MainWindow(QMainWindow):
         elif index == 2: self.load_table_data("fornitori")
         elif index == 3: self.load_table_data("articoli")
         elif index == 4: self.load_table_data("fatture")
-        elif index == 5: pass
+        elif index == 5: self.load_table_data("fatture_fornitori")
+        elif index == 6: pass
 
     # --- VIEWS SETUP ---
     def setup_dashboard_view(self):
@@ -1424,6 +1447,64 @@ class MainWindow(QMainWindow):
             btn_search_art.clicked.connect(self.open_article_search)
             top_bar.addWidget(btn_search_art)
 
+        elif type_key == "fatture_fornitori":
+            # SDI Import Button
+            btn_import_sdi = QPushButton("⬇ Carica SDI (.p7m)")
+            btn_import_sdi.setCursor(Qt.PointingHandCursor)
+            btn_import_sdi.setStyleSheet("""
+                QPushButton {
+                    background-color: #ffb74d;
+                    color: black;
+                    font-weight: bold;
+                    padding: 0 15px;
+                    border-radius: 4px;
+                }
+                QPushButton:hover {
+                    background-color: #ffa726;
+                }
+            """)
+            btn_import_sdi.setFixedHeight(30)
+            btn_import_sdi.clicked.connect(self.import_sdi_files)
+            top_bar.addWidget(btn_import_sdi)
+
+            # SDI Folder Import Button
+            btn_import_folder_sdi = QPushButton("📂 Importa Cartella SDI")
+            btn_import_folder_sdi.setCursor(Qt.PointingHandCursor)
+            btn_import_folder_sdi.setStyleSheet("""
+                QPushButton {
+                    background-color: #ffcc80;
+                    color: black;
+                    font-weight: bold;
+                    padding: 0 15px;
+                    border-radius: 4px;
+                }
+                QPushButton:hover {
+                    background-color: #ffb74d;
+                }
+            """)
+            btn_import_folder_sdi.setFixedHeight(30)
+            btn_import_folder_sdi.clicked.connect(self.import_sdi_folder)
+            top_bar.addWidget(btn_import_folder_sdi)
+
+            # Clear Invoices Button
+            btn_clear_invoices = QPushButton("🗑 Svuota Fatture")
+            btn_clear_invoices.setCursor(Qt.PointingHandCursor)
+            btn_clear_invoices.setStyleSheet("""
+                QPushButton {
+                    background-color: #ef5350;
+                    color: white;
+                    font-weight: bold;
+                    padding: 0 15px;
+                    border-radius: 4px;
+                }
+                QPushButton:hover {
+                    background-color: #e53935;
+                }
+            """)
+            btn_clear_invoices.setFixedHeight(30)
+            btn_clear_invoices.clicked.connect(self.clear_all_fatture_acquisto)
+            top_bar.addWidget(btn_clear_invoices)
+
         # Column config button
         btn_config = QPushButton("⚙")
         btn_config.setFixedSize(36, 36)
@@ -1457,6 +1538,9 @@ class MainWindow(QMainWindow):
         elif type_key == "articoli":
             table.cellDoubleClicked.connect(self.open_article_detail)
             table.cellClicked.connect(self.handle_article_table_click)
+        elif type_key == "fatture_fornitori":
+            table.cellDoubleClicked.connect(self.open_invoice_detail)
+            table.cellClicked.connect(self.handle_invoice_table_click)
 
         layout.addWidget(table)
         self.stack.addWidget(page)
@@ -1464,6 +1548,91 @@ class MainWindow(QMainWindow):
     def open_article_search(self):
         dialog = ArticleSearchDialog(self)
         dialog.exec()
+
+    def import_sdi_files(self):
+        """Apre un dialogo per selezionare file .p7m o .xml e li importa."""
+        files, _ = QFileDialog.getOpenFileNames(
+            self, "Seleziona Fatture Elettroniche", "", "Fatture Elettroniche (*.p7m *.xml);;Tutti i file (*.*)"
+        )
+        if not files: return
+        
+        from data_manager import DataManager
+        dm = DataManager(self.db_manager)
+        
+        success_count = 0
+        errors = []
+        
+        for f in files:
+            success, msg = dm.import_fattura_acquisto_p7m(f)
+            if success:
+                success_count += 1
+            else:
+                errors.append(f"{os.path.basename(f)}: {msg}")
+        
+        if success_count > 0:
+            self.load_table_data("fatture_fornitori")
+            self.load_stats()
+            
+        if not errors:
+            QMessageBox.information(self, "Importazione Completata", f"Importate {success_count} fatture correttamente.")
+        else:
+            err_msg = "\n".join(errors)
+            QMessageBox.warning(self, "Esito Importazione", f"Importate {success_count} fatture.\n\nErrori:\n{err_msg}")
+
+    def import_sdi_folder(self):
+        """Apre un dialogo per selezionare una cartella e importa ricorsivamente tutte le SDI."""
+        folder = QFileDialog.getExistingDirectory(self, "Seleziona Cartella Fatture SDI")
+        if not folder: return
+        
+        from PySide6.QtWidgets import QProgressDialog
+        
+        progress = QProgressDialog("Scansione cartelle...", "Annulla", 0, 100, self)
+        progress.setWindowModality(Qt.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setWindowTitle("Importazione Massiva SDI")
+        progress.show()
+        
+        from data_manager import DataManager
+        dm = DataManager(self.db_manager)
+        
+        def update_progress(current, total, filename):
+            progress.setMaximum(total)
+            progress.setValue(current)
+            progress.setLabelText(f"Importazione: {filename} ({current}/{total})")
+            QApplication.processEvents()
+            
+        success, errors_count, error_list = dm.batch_import_from_folders([folder], progress_callback=update_progress)
+        
+        progress.setValue(progress.maximum())
+        
+        if success > 0:
+            self.load_table_data("fatture_fornitori")
+            self.load_stats()
+            
+        if not error_list:
+            QMessageBox.information(self, "Importazione Completata", f"Importazione terminata.\nFatture caricate con successo: {success}")
+        else:
+            err_msg = "\n".join(error_list[:10])
+            if len(error_list) > 10:
+                err_msg += f"\n... e altri {len(error_list)-10} errori."
+            QMessageBox.warning(self, "Esito Importazione Massiva", 
+                                f"Fatture caricate: {success}\nErrori riscontrati: {errors_count}\n\nAnteprima Errori:\n{err_msg}")
+
+    def clear_all_fatture_acquisto(self):
+        """Chiede conferma e svuota tutte le fatture fornitori dal database."""
+        reply = QMessageBox.warning(self, "Conferma Cancellazione", 
+                                  "Questa azione eliminerà DEFINITIVAMENTE tutte le fatture fornitori e le relative righe dettaglio.\n\nVuoi procedere?",
+                                  QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        
+        if reply == QMessageBox.Yes:
+            dm = DataManager(self.db_manager)
+            success, msg = dm.delete_all_fatture_acquisto()
+            if success:
+                QMessageBox.information(self, "Svuotamento Completato", msg)
+                self.load_table_data("fatture_fornitori")
+                self.load_stats()
+            else:
+                QMessageBox.critical(self, "Errore", msg)
 
     def setup_settings_view(self):
         page = QWidget()
@@ -1521,15 +1690,25 @@ class MainWindow(QMainWindow):
             c_count = session.query(Cliente).count()
             f_count = session.query(Fornitore).count()
             a_count = session.query(Articolo).count()
-            v_count = session.query(Fattura).count()
-            self.stats_label.setText(f"Statistiche Rapide:\n- Clienti: {c_count}\n- Fornitori: {f_count}\n- Articoli: {a_count}\n- Fatture: {v_count}")
+            v_count = session.query(Fattura).filter_by(tipo='VENDITA').count()
+            p_count = session.query(Fattura).filter_by(tipo='ACQUISTO').count()
+            
+            stats_text = (
+                f"Statistiche Rapide:\n"
+                f"- Clienti: {c_count}\n"
+                f"- Fornitori: {f_count}\n"
+                f"- Articoli: {a_count}\n"
+                f"- Fatture Clienti: {v_count}\n"
+                f"- Fatture Fornitori (SDI): {p_count}"
+            )
+            self.stats_label.setText(stats_text)
         except Exception as e:
             self.stats_label.setText(f"Errore connessione db: {e}")
         finally:
             session.close()
 
     def get_table_widget(self, index):
-        key_map = {1: "clienti", 2: "fornitori", 3: "articoli", 4: "fatture"}
+        key_map = {1: "clienti", 2: "fornitori", 3: "articoli", 4: "fatture", 5: "fatture_fornitori"}
         key = key_map.get(index)
         if not key: return None
         page = self.stack.widget(index)
@@ -1547,6 +1726,7 @@ class MainWindow(QMainWindow):
         ],
         "articoli": ["Codice", "Descrizione", "Prezzo", "UM", "Azioni"],
         "fatture": ["ID", "Numero", "Data", "Codice Cliente", "Cliente", "Causale", "Totale", "Azioni"],
+        "fatture_fornitori": ["ID", "Numero", "Data", "Codice Forn.", "Fornitore", "Causale", "Totale", "Azioni"],
     }
 
     def load_table_data(self, type_key):
@@ -1570,7 +1750,8 @@ class MainWindow(QMainWindow):
             if type_key == "clienti": items = session.query(Cliente).all()
             elif type_key == "fornitori": items = session.query(Fornitore).all()
             elif type_key == "articoli": items = session.query(Articolo).all()
-            elif type_key == "fatture": items = session.query(Fattura).order_by(Fattura.data.desc()).all()
+            elif type_key == "fatture": items = session.query(Fattura).filter_by(tipo='VENDITA').order_by(Fattura.data.desc()).all()
+            elif type_key == "fatture_fornitori": items = session.query(Fattura).filter_by(tipo='ACQUISTO').order_by(Fattura.data.desc()).all()
             
             table.setRowCount(len(items))
             for i, obj in enumerate(items):
@@ -1648,6 +1829,19 @@ class MainWindow(QMainWindow):
                     act_item.setForeground(QColor("#00bcd4"))
                     table.setItem(i, 7, act_item)
 
+                elif type_key == "fatture_fornitori":
+                    table.setItem(i, 0, make_item(obj.id, user_role_data=obj.id))
+                    table.setItem(i, 1, make_item(obj.numero))
+                    table.setItem(i, 2, make_item(obj.data.strftime("%d/%m/%Y") if obj.data else "-", raw_value=obj.data))
+                    table.setItem(i, 3, make_item(obj.fornitore_codice or ""))
+                    table.setItem(i, 4, make_item(obj.fornitore_denominazione or ""))
+                    table.setItem(i, 5, make_item(obj.causale or ""))
+                    table.setItem(i, 6, make_item(f"€ {obj.totale:.2f}", raw_value=obj.totale))
+                    # Actions
+                    act_item = QTableWidgetItem("📦 Fornitore")
+                    act_item.setForeground(QColor("#ffb74d"))
+                    table.setItem(i, 7, act_item)
+
         finally:
             session.close()
 
@@ -1663,7 +1857,11 @@ class MainWindow(QMainWindow):
             self.load_table_data(type_key)
 
     def open_invoice_detail(self, row, col):
-        table = self.get_table_widget(4)
+        table = self.sender() # Getting the table that sent the signal
+        if not isinstance(table, QTableWidget): 
+            # Fallback if called manually or with different sender
+            table = self.get_table_widget(4)
+            
         inv_id = None
         for c in range(table.columnCount()):
             item = table.item(row, c)
@@ -1677,9 +1875,13 @@ class MainWindow(QMainWindow):
             
         session = self.db_manager.get_session()
         try:
+            # We use lazy joining to avoid DetachedInstanceError in dialog if needed, 
+            # though the dialog has its own session now.
             fattura = session.get(Fattura, inv_id)
             if fattura:
-                self.show_detail_window(f"invoice_{inv_id}", InvoiceDetailDialog, fattura)
+                # Use a specific window ID to allow multiple instances
+                prefix = "invoice_buy" if fattura.tipo == 'ACQUISTO' else "invoice_sell"
+                self.show_detail_window(f"{prefix}_{inv_id}", InvoiceDetailDialog, fattura)
             else:
                 QMessageBox.warning(self, "Errore", "Fattura non trovata.")
         except Exception as e:
@@ -1948,17 +2150,43 @@ class MainWindow(QMainWindow):
         table = self.sender()
         header = table.horizontalHeaderItem(col).text()
         if header == "Azioni":
-            cli_code = None
-            cli_name = None
+            # Determine if it's a client or supplier action
+            action_text = table.item(row, col).text()
+            
+            code = None
+            name = None
             for c in range(table.columnCount()):
                 h_text = table.horizontalHeaderItem(c).text()
-                if h_text == "Codice Cliente":
-                    cli_code = table.item(row, c).text()
-                elif h_text == "Cliente":
-                    cli_name = table.item(row, c).text()
+                if h_text in ["Codice Cliente", "Codice Forn."]:
+                    code = table.item(row, c).text()
+                elif h_text in ["Cliente", "Fornitore"]:
+                    name = table.item(row, c).text()
                     
-            if cli_code or cli_name:
-                self.open_client_by_code(cli_code, cli_name)
+            if action_text == "👤 Cliente":
+                if code or name:
+                    self.open_client_by_code(code, name)
+            elif action_text == "📦 Fornitore":
+                if code or name:
+                    self.open_supplier_by_code(code, name)
+
+    def open_supplier_by_code(self, code, name=None):
+        """Cerca un fornitore per codice o nome e apre il dettaglio."""
+        session = self.db_manager.get_session()
+        try:
+            supplier = None
+            if code:
+                supplier = session.query(Fornitore).filter_by(codice=code).first()
+            if not supplier and name:
+                supplier = session.query(Fornitore).filter_by(ragione_sociale=name).first()
+            if not supplier and name:
+                supplier = session.query(Fornitore).filter(Fornitore.ragione_sociale.ilike(f"%{name}%")).first()
+
+            if supplier:
+                self.show_detail_window(f"supplier_{supplier.id}", SupplierDetailDialog, supplier)
+            else:
+                QMessageBox.warning(self, "Attenzione", f"Fornitore '{code or name}' non trovato.")
+        finally:
+            session.close()
 
     def open_invoices_by_client(self, code, name=None):
         if not code and not name: return

@@ -3,6 +3,8 @@ from sqlalchemy.orm import Session
 from database import DatabaseManager, Cliente, Fornitore, Articolo, Fattura, RigaFattura
 from datetime import datetime
 import os
+import re
+import xml.etree.ElementTree as ET
 
 class DataManager:
     def __init__(self, db_manager: DatabaseManager):
@@ -203,6 +205,432 @@ class DataManager:
             # Update Total
             fattura.totale += totale_riga
 
+    def import_fattura_acquisto_sdi(self, filepath, session=None):
+        """Punto di ingresso generico per importare una fattura da .p7m o .xml."""
+        close_session = False
+        if session is None:
+            session = self.db_manager.get_session()
+            close_session = True
+            
+        try:
+            if filepath.lower().endswith('.p7m'):
+                xml_bytes, err = self.extract_xml_from_p7m(filepath)
+            else:
+                with open(filepath, 'rb') as f:
+                    xml_bytes = f.read()
+                err = None
+                
+            if err:
+                return False, f"Errore lettura/estrazione: {err}"
+            
+            data, err = self.parse_fattura_xml(xml_bytes)
+            if err:
+                return False, f"Errore parsing XML: {err}"
+            
+            # 1. Gestione Fornitore
+            forn_data = data.get('fornitore', {})
+            piva = forn_data.get('piva')
+            if not piva:
+                return False, "Partita IVA fornitore non trovata nella fattura"
+            
+            fornitore = session.query(Fornitore).filter_by(partita_iva=piva).first()
+            if not fornitore:
+                # Se non esiste, lo creiamo con i dati base dalla fattura
+                # Nota: idealmente verrebbe usato il codice fornitore del gestionale se esistente, 
+                # qui usiamo la PIVA come codice temporaneo se nuovo.
+                denominazione = forn_data.get('denominazione') or f"{forn_data.get('nome','')} {forn_data.get('cognome','')}".strip()
+                fornitore = Fornitore(
+                    codice=f"NEW_{piva}",
+                    ragione_sociale=denominazione,
+                    partita_iva=piva,
+                    indirizzo=forn_data.get('indirizzo'),
+                    cap=forn_data.get('cap'),
+                    localita=forn_data.get('comune'),
+                    provincia=forn_data.get('provincia'),
+                    nazione=forn_data.get('nazione')
+                )
+                session.add(fornitore)
+                session.flush() # Per avere l'ID se necessario (anche se usiamo codici)
+            
+            # 2. Creazione Fattura
+            ft_data = data.get('fattura', {})
+            nr_fattura = ft_data.get('numero')
+            data_fattura = self._parse_date(ft_data.get('data'))
+            
+            # Gestione Duplicati/Sovrascrittura
+            existing = session.query(Fattura).filter_by(
+                tipo='ACQUISTO',
+                numero=nr_fattura,
+                fornitore_codice=fornitore.codice
+            ).first()
+            
+            if existing:
+                # Se presente, la eliminiamo per sovrascriverla (inclusi i figli grazie al cascade)
+                session.delete(existing)
+                session.flush()
+            
+            fattura = Fattura(
+                tipo='ACQUISTO',
+                numero=nr_fattura,
+                data=data_fattura,
+                fornitore_codice=fornitore.codice,
+                fornitore_denominazione=fornitore.ragione_sociale,
+                totale=self._parse_float(ft_data.get('importo_totale')),
+                causale=f"Import SDI: {os.path.basename(filepath)}"
+            )
+            session.add(fattura)
+            
+            # 3. Righe Dettaglio
+            for r in data.get('righe', []):
+                riga = RigaFattura(
+                    fattura=fattura,
+                    articolo_codice=r.get('codice_articolo'),
+                    descrizione=r.get('descrizione'),
+                    quantita=self._parse_float(r.get('quantita')),
+                    prezzo_unitario=self._parse_float(r.get('prezzo_unitario')),
+                    totale_riga=self._parse_float(r.get('prezzo_totale'))
+                )
+                session.add(riga)
+            
+            if close_session:
+                session.commit()
+            else:
+                session.flush() # Assicura che i dati siano pronti per il commit esterno
+                
+            return True, f"Fattura n. {nr_fattura} importata correttamente."
+        except Exception as e:
+            return False, f"Errore importazione: {str(e)}"
+        finally:
+            if close_session:
+                session.close()
+
+    def delete_all_fatture_acquisto(self):
+        """Elimina tutte le fatture di acquisto e le relative righe dal database."""
+        session = self.db_manager.get_session()
+        try:
+            # Eliminiamo tutte le fatture di tipo ACQUISTO
+            # Il cascade della relazione RigaFattura (se configurato) o l'eliminazione manuale 
+            # assicurerà la pulizia dei figli.
+            session.query(Fattura).filter_by(tipo='ACQUISTO').delete(synchronize_session=False)
+            session.commit()
+            return True, "Tutte le fatture di acquisto sono state eliminate."
+        except Exception as e:
+            session.rollback()
+            return False, f"Errore durante l'eliminazione: {str(e)}"
+        finally:
+            session.close()
+            
+
+    def import_fattura_acquisto_p7m(self, filepath):
+        """Mantenuto per compatibilità, delega al nuovo metodo generico."""
+        return self.import_fattura_acquisto_sdi(filepath)
+
+    def batch_import_from_folders(self, folder_paths, progress_callback=None):
+        """Scansiona cartelle e sottocartelle, importa file SDI univoci."""
+        all_files = []
+        for folder in folder_paths:
+            if not os.path.exists(folder): continue
+            for root, dirs, files in os.walk(folder):
+                for f in files:
+                    # Esclui file di metadati SDI che non sono fatture
+                    if "_metadato" in f.lower():
+                        continue
+                    if f.lower().endswith(('.p7m', '.xml')):
+                        all_files.append(os.path.join(root, f))
+        
+        if not all_files:
+            return 0, 0, []
+
+        session = self.db_manager.get_session()
+        success_count = 0
+        error_count = 0
+        errors = []
+        
+        # Logica di deduplicazione: raggruppiamo per nome file base (senza estensione)
+        # In genere le fatture SDI scaricate hanno nomi file univoci.
+        # Spesso lo stesso documento è presente sia come .xml (SD) sia come .p7m.
+        # Preferiamo il file .xml se presente, in quanto più pulito e facile da leggere.
+        file_map = {} # basename -> path
+        for fpath in all_files:
+            fname = os.path.basename(fpath).lower()
+            # Identificazione basename: rimuoviamo sia .p7m che .xml
+            basename = fname
+            if basename.endswith('.p7m'): basename = basename[:-4]
+            if basename.endswith('.xml'): basename = basename[:-4]
+            
+            # Se abbiamo già un file per questo basename, decidiamo quale tenere
+            if basename not in file_map:
+                file_map[basename] = fpath
+            else:
+                current_path = file_map[basename]
+                # Priorità: XML (SD) > P7M
+                if fpath.lower().endswith('.xml'):
+                    file_map[basename] = fpath
+                elif current_path.lower().endswith('.p7m') and fpath.lower().endswith('.xml'):
+                    file_map[basename] = fpath
+
+        unique_files = list(file_map.values())
+        total = len(unique_files)
+        
+        try:
+            for i, fpath in enumerate(unique_files):
+                if progress_callback:
+                    progress_callback(i, total, os.path.basename(fpath))
+                
+                success, msg = self.import_fattura_acquisto_sdi(fpath, session=session)
+                if success:
+                    success_count += 1
+                else:
+                    error_count += 1
+                    errors.append(f"{os.path.basename(fpath)}: {msg}")
+            
+            session.commit()
+        except Exception as e:
+            session.rollback()
+            errors.append(f"Errore fatale batch: {str(e)}")
+        finally:
+            session.close()
+            
+        return success_count, error_count, errors
+
+    def extract_xml_from_p7m(self, filepath):
+        """Estrae il payload XML da un file .p7m gestendo formati binari, Base64 e line-based."""
+        try:
+            with open(filepath, 'rb') as f:
+                raw_data = f.read()
+            
+            # 1. Pulizia preliminare e gestione encoding testuale (Base64/PEM)
+            data = raw_data.replace(b'\x00', b'')
+            
+            # 2. Supporto Base64 (alcuni P7M scaricati da portali sono Base64 PEM)
+            if b'BASE64' in data.upper() or (not b'<' in data and len(data) > 100):
+                import base64
+                import re
+                # Cerchiamo blocchi Base64
+                b64_matches = re.findall(rb'[A-Za-z0-9+/=\s]{100,}', data)
+                for match in b64_matches:
+                    try:
+                        decoded = base64.b64decode(match.strip())
+                        if b'<?xml' in decoded or b'<Fattura' in decoded:
+                            data = decoded
+                            break
+                    except: continue
+
+            # 3. STRATEGIA BINARIA CHIRURGICA
+            start = -1
+            for t in [b'<?xml', b'<p:FatturaElettronica', b'<FatturaElettronica']:
+                pos = data.lower().find(t.lower())
+                if pos != -1:
+                    if start == -1 or pos < start: start = pos
+            
+            if start != -1:
+                end = -1
+                for t in [b'</p:FatturaElettronica>', b'</FatturaElettronica>']:
+                    pos = data.lower().find(t.lower(), start)
+                    if pos != -1:
+                        potential_end = pos + len(t)
+                        if end == -1 or potential_end < end: end = potential_end
+                
+                if end != -1:
+                    return data[start:end], None
+
+            # 4. STRATEGIA LINE-BASED (Focus sulla "quarta riga" o simili)
+            lines = data.splitlines()
+            xml_accumulator = []
+            capturing = False
+            for line in lines:
+                line_lower = line.lower()
+                if not capturing:
+                    for t in [b'<?xml', b'<p:FatturaElettronica', b'<FatturaElettronica']:
+                        if t.lower() in line_lower:
+                            capturing = True
+                            pos = line_lower.find(t.lower())
+                            xml_accumulator.append(line[pos:])
+                            break
+                else:
+                    end_found = False
+                    for t in [b'</p:FatturaElettronica>', b'</FatturaElettronica>']:
+                        if t.lower() in line_lower:
+                            pos = line_lower.find(t.lower())
+                            xml_accumulator.append(line[:pos + len(t)])
+                            end_found = True
+                            break
+                    if end_found: break
+                    xml_accumulator.append(line)
+            
+            if xml_accumulator:
+                return b"".join(xml_accumulator), None
+                
+            return None, "Struttura XML non identificata (probabile file PDF o corrotto)"
+            
+        except Exception as e:
+            return None, f"Errore estrazione: {str(e)}"
+
+    def parse_fattura_xml(self, xml_bytes):
+        """Parsa l'XML con auto-rilevamento encoding, pulizia radicale e regex fallback."""
+        import re
+        
+        # 1. Rilevamento Encoding
+        encoding = 'utf-8'
+        m = re.search(rb'encoding=["\'](.*?)["\']', xml_bytes[:800])
+        if m:
+            encoding = m.group(1).decode('ascii', errors='ignore')
+        
+        def try_parse(b_data):
+            try:
+                # Proviamo a pulire i byte binari spazzatura (non-printable tranne tab/newline)
+                # Lasciamo solo il range ASCII stampabile e i byte sopra 127 se sembrano validi UTF-8
+                clean = re.sub(rb'[^\x09\x0A\x0D\x20-\x7E\xA0-\xFF]', b' ', b_data)
+                return ET.fromstring(clean)
+            except:
+                try:
+                    # Strip namespace radicale
+                    text = b_data.decode(encoding, errors='replace')
+                    text = re.sub(r'\s+xmlns(:[a-zA-Z0-9]+)?="[^"]*"', '', text)
+                    text = re.sub(r'</?[a-zA-Z0-9]+:', '<', text)
+                    # Clipping post-chiusura
+                    for t in ['</FatturaElettronica>', '</p:FatturaElettronica>']:
+                        pos = text.lower().rfind(t.lower())
+                        if pos != -1:
+                            text = text[:pos + len(t)]
+                            break
+                    return ET.fromstring(text.encode('utf-8'))
+                except:
+                    return None
+
+        root = try_parse(xml_bytes)
+        if root is not None:
+            return self._extract_data_from_root(root), None
+
+        # FALLBACK REGEX: Se ElementTree fallisce, estraiamo i dati via Regex
+        # Utile per file "irrecuperabili" strutturalmente ma contenenti testo leggibile
+        try:
+            text = xml_bytes.decode(encoding, errors='replace')
+            
+            def get_val(pattern, txt):
+                m = re.search(pattern, txt, re.IGNORECASE | re.DOTALL)
+                return m.group(1).strip() if m else ""
+
+            res = {
+                'fornitore': {
+                    'piva': get_val(r'<IdCodice>([^<]+)', text),
+                    'denominazione': get_val(r'<Denominazione>([^<]+)', text) or get_val(r'<Nome>([^<]+)', text),
+                },
+                'fattura': {
+                    'numero': get_val(r'<Numero>([^<]+)', text),
+                    'data': get_val(r'<Data>([^<]+)', text),
+                    'importo_totale': get_val(r'<ImportoTotaleDocumento>([^<]+)', text),
+                },
+                'righe': []
+            }
+            
+            # Estrazione righe semplificata via regex
+            line_matches = re.findall(r'<DettaglioLinee>(.*?)</DettaglioLinee>', text, re.DOTALL)
+            for l_txt in line_matches:
+                res['righe'].append({
+                    'descrizione': get_val(r'<Descrizione>([^<]+)', l_txt),
+                    'quantita': self._parse_float(get_val(r'<Quantita>([^<]+)', l_txt)),
+                    'prezzo_unitario': self._parse_float(get_val(r'<PrezzoUnitario>([^<]+)', l_txt)),
+                    'prezzo_totale': self._parse_float(get_val(r'<PrezzoTotale>([^<]+)', l_txt)),
+                    'codice_articolo': get_val(r'<CodiceValore>([^<]+)', l_txt),
+                })
+            
+            if res['fattura']['numero']:
+                return res, None
+        except: pass
+
+        return None, "Impossibile recuperare i dati della fattura (XML e Regex falliti)"
+
+    def _extract_data_from_root(self, root):
+        """Metodo helper per estrarre i dati dalla struttura ET già parsata."""
+        def find_text(el, tag_name):
+            for child in el.iter():
+                tag = child.tag.split('}')[-1]
+                if tag == tag_name:
+                    return child.text.strip() if child.text else ''
+            return ''
+
+        res = {'fornitore': {}, 'cliente': {}, 'fattura': {}, 'righe': []}
+        
+        # Blocchi principali
+        header = None
+        for el in root.iter():
+            if el.tag.split('}')[-1] == 'FatturaElettronicaHeader':
+                header = el
+                break
+        if header is None: header = root
+        
+        ced = None
+        for el in header.iter():
+            if el.tag.split('}')[-1] == 'CedentePrestatore':
+                ced = el
+                break
+        
+        if ced is not None:
+            res['fornitore'] = {
+                'denominazione': find_text(ced, 'Denominazione'),
+                'nome': find_text(ced, 'Nome'),
+                'cognome': find_text(ced, 'Cognome'),
+                'piva': find_text(ced, 'IdCodice'),
+                'indirizzo': find_text(ced, 'Indirizzo'),
+                'cap': find_text(ced, 'CAP'),
+                'comune': find_text(ced, 'Comune'),
+                'provincia': find_text(ced, 'Provincia'),
+                'nazione': find_text(ced, 'Nazione'),
+            }
+        
+        body = None
+        for el in root.iter():
+            if el.tag.split('}')[-1] == 'FatturaElettronicaBody':
+                body = el
+                break
+        if body is None: body = root
+        
+        dg = None
+        for el in body.iter():
+            if el.tag.split('}')[-1] == 'DatiGeneraliDocumento':
+                dg = el
+                break
+        
+        if dg is not None:
+            res['fattura'] = {
+                'numero': find_text(dg, 'Numero'),
+                'data': find_text(dg, 'Data'),
+                'importo_totale': find_text(dg, 'ImportoTotaleDocumento'),
+            }
+        
+        # Righe Dettaglio - Filtraggio Restrittivo
+        excluded_keywords = ['DDT', 'ORDINE', 'SPESE', 'TRASPORTO', 'IMBALLO', 'BOLLO', 'CONTRIBUTO', 'RIF.', 'RECA', 'CAUSALE']
+        
+        for line in body.iter():
+            if line.tag.split('}')[-1] == 'DettaglioLinee':
+                desc = find_text(line, 'Descrizione')
+                quant = self._parse_float(find_text(line, 'Quantita'))
+                prezzo = self._parse_float(find_text(line, 'PrezzoUnitario'))
+                totale = self._parse_float(find_text(line, 'PrezzoTotale'))
+                codice = find_text(line, 'CodiceValore')
+                
+                if not codice: codice = ""
+                
+                if quant <= 0 or prezzo <= 0 or totale <= 0: continue
+                
+                desc_upper = desc.upper()
+                if any(kw in desc_upper for kw in excluded_keywords): continue
+                
+                if not codice and len(desc) > 100 and " " in desc:
+                    if not any(char.isdigit() for char in desc[:10]): continue
+
+                res['righe'].append({
+                    'descrizione': desc,
+                    'quantita': quant,
+                    'unita_misura': find_text(line, 'UnitaMisura'),
+                    'prezzo_unitario': prezzo,
+                    'prezzo_totale': totale,
+                    'codice_articolo': codice,
+                })
+        
+        return res
+
     def _parse_date(self, val):
         if pd.isna(val) or val == '': return None
         try:
@@ -212,7 +640,9 @@ class DataManager:
 
     def _parse_float(self, val):
         try:
-            return float(str(val).replace(',', '.'))
+            # Rimuove eventuali simboli valuta o spazi prima del cast
+            clean_val = str(val).replace('€', '').replace('$', '').strip()
+            return float(clean_val.replace(',', '.'))
         except:
             return 0.0
 
