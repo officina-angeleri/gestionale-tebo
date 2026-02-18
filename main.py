@@ -1158,7 +1158,23 @@ class MainWindow(QMainWindow):
     def __init__(self, db_manager):
         super().__init__()
         self.setWindowTitle("Gestionale Tebo per Angeleri")
-        self.resize(1100, 850)
+        
+        # Screen-aware window sizing to prevent oversized window on startup
+        screen = QApplication.primaryScreen().availableGeometry()
+        # Use 70% of screen width and 80% of screen height, capped at reasonable maximums
+        initial_width = min(1000, int(screen.width() * 0.7))
+        initial_height = min(700, int(screen.height() * 0.8))
+        self.resize(initial_width, initial_height)
+        
+        # Set minimum size to ensure usability
+        self.setMinimumSize(800, 600)
+        
+        # Center window on screen
+        self.move(
+            (screen.width() - initial_width) // 2,
+            (screen.height() - initial_height) // 2
+        )
+        
         self.db_manager = db_manager
         
         # Load Preferences (Theme, etc.)
