@@ -22,6 +22,15 @@ from sqlalchemy.orm import joinedload
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 COLUMN_PREFS_FILE = os.path.join(BASE_DIR, "column_prefs.json")
 
+# Lista predefinita fornitori da escludere (utenze, GDO, telecom, ecc.)
+FORNITORI_SERVIZIO_DEFAULT = [
+    "TIM", "TELECOM", "ENEL", "ENI", "A2A", "IREN", "HERA", "ITALGAS",
+    "VODAFONE", "WIND", "FASTWEB", "TISCALI", "ILIAD", "3 ITALIA",
+    "ESSELUNGA", "CARREFOUR", "CONAD", "COOP", "LIDL", "ALDI", "EUROSPIN",
+    "PENNY", "PAM", "SIGMA", "DESPAR", "SPAR", "MD", "IN'S",
+    "AMAZON", "EBAY", "PAYPAL",
+]
+
 
 def load_column_prefs():
     """Load column visibility preferences from JSON file."""
@@ -1448,6 +1457,54 @@ class MainWindow(QMainWindow):
             top_bar.addWidget(btn_search_art)
 
         elif type_key == "fatture_fornitori":
+            # Date filters
+            top_bar.addWidget(QLabel("Dal:"))
+            d_start_ff = QDateEdit()
+            d_start_ff.setCalendarPopup(True)
+            d_start_ff.setDate(QDate(2020, 1, 1))
+            d_start_ff.setObjectName("filter_dstart_fatture_fornitori")
+            d_start_ff.dateChanged.connect(lambda d: self.filter_table("fatture_fornitori", self.findChild(QLineEdit, "search_fatture_fornitori").text() if self.findChild(QLineEdit, "search_fatture_fornitori") else ""))
+            top_bar.addWidget(d_start_ff)
+
+            top_bar.addWidget(QLabel("Al:"))
+            d_end_ff = QDateEdit()
+            d_end_ff.setCalendarPopup(True)
+            d_end_ff.setDate(QDate.currentDate())
+            d_end_ff.setObjectName("filter_dend_fatture_fornitori")
+            d_end_ff.dateChanged.connect(lambda d: self.filter_table("fatture_fornitori", self.findChild(QLineEdit, "search_fatture_fornitori").text() if self.findChild(QLineEdit, "search_fatture_fornitori") else ""))
+            top_bar.addWidget(d_end_ff)
+
+            # Toggle "Escludi Servizi"
+            btn_escludi = QPushButton("⚡ Escludi Servizi")
+            btn_escludi.setCheckable(True)
+            btn_escludi.setObjectName("btn_escludi_servizi_ff")
+            btn_escludi.setCursor(Qt.PointingHandCursor)
+            btn_escludi.setFixedHeight(30)
+            btn_escludi.setStyleSheet("""
+                QPushButton {
+                    background-color: #555;
+                    color: #ccc;
+                    font-weight: bold;
+                    padding: 0 12px;
+                    border-radius: 4px;
+                    border: 1px solid #666;
+                }
+                QPushButton:checked {
+                    background-color: #f57c00;
+                    color: white;
+                    border: 1px solid #e65100;
+                }
+                QPushButton:hover { background-color: #777; }
+            """)
+            # Restore toggle state from prefs
+            _prefs_ff = load_column_prefs()
+            btn_escludi.setChecked(_prefs_ff.get("escludi_servizi_ff", False))
+            btn_escludi.toggled.connect(lambda checked: (
+                save_column_prefs({**load_column_prefs(), "escludi_servizi_ff": checked}),
+                self.filter_table("fatture_fornitori", self.findChild(QLineEdit, "search_fatture_fornitori").text() if self.findChild(QLineEdit, "search_fatture_fornitori") else "")
+            ))
+            top_bar.addWidget(btn_escludi)
+
             # SDI Import Button
             btn_import_sdi = QPushButton("⬇ Carica SDI (.p7m)")
             btn_import_sdi.setCursor(Qt.PointingHandCursor)
@@ -1514,6 +1571,21 @@ class MainWindow(QMainWindow):
         top_bar.addWidget(btn_config)
         
         layout.addLayout(top_bar)
+
+        # Barra totali (solo per fatture_fornitori)
+        if type_key == "fatture_fornitori":
+            totals_bar = QHBoxLayout()
+            lbl_totals_visible = QLabel("Visibili: — fatture — € —")
+            lbl_totals_visible.setObjectName("lbl_totals_visible_ff")
+            lbl_totals_visible.setStyleSheet("color: #ffb74d; font-weight: bold; font-size: 13px; margin: 4px 10px;")
+            lbl_totals_complete = QLabel("Vista completa: — fatture — € —")
+            lbl_totals_complete.setObjectName("lbl_totals_complete_ff")
+            lbl_totals_complete.setStyleSheet("color: #888; font-size: 12px; margin: 4px 10px;")
+            totals_bar.addWidget(lbl_totals_visible)
+            totals_bar.addWidget(QLabel("|"))
+            totals_bar.addWidget(lbl_totals_complete)
+            totals_bar.addStretch()
+            layout.addLayout(totals_bar)
 
         # Table
         table = QTableWidget()
@@ -1676,7 +1748,43 @@ class MainWindow(QMainWindow):
         import_layout.addWidget(btn_import)
         
         layout.addWidget(import_group)
-        
+
+        # Lista Esclusione Servizi
+        excl_group = QGroupBox("Filtro Esclusione Servizi — Lista Fornitori")
+        excl_layout = QVBoxLayout(excl_group)
+        excl_layout.addWidget(QLabel("Un nome per riga (o parte del nome). Usato dal toggle 'Escludi Servizi' in Fatture Fornitori:"))
+
+        from PySide6.QtWidgets import QTextEdit
+        txt_excl = QTextEdit()
+        txt_excl.setObjectName("txt_lista_esclusione")
+        txt_excl.setMaximumHeight(150)
+        txt_excl.setPlaceholderText("Es.:\nTIM\nENEL\nESSELUNGA")
+        # Carica lista corrente
+        _prefs_s = load_column_prefs()
+        _lista_corrente = _prefs_s.get("lista_esclusione_servizi", FORNITORI_SERVIZIO_DEFAULT)
+        txt_excl.setPlainText("\n".join(_lista_corrente))
+        excl_layout.addWidget(txt_excl)
+
+        btn_save_excl = QPushButton("💾 Salva Lista Esclusione")
+        btn_save_excl.setStyleSheet("height: 35px; background-color: #388e3c; color: white; font-weight: bold;")
+        def _save_excl_list():
+            lines = [l.strip() for l in txt_excl.toPlainText().splitlines() if l.strip()]
+            p = load_column_prefs()
+            p["lista_esclusione_servizi"] = lines
+            save_column_prefs(p)
+            QMessageBox.information(self, "Lista salvata", f"Lista aggiornata con {len(lines)} voci.")
+        btn_save_excl.clicked.connect(_save_excl_list)
+        excl_layout.addWidget(btn_save_excl)
+
+        btn_reset_excl = QPushButton("↺ Ripristina Lista Predefinita")
+        btn_reset_excl.setStyleSheet("height: 30px;")
+        def _reset_excl_list():
+            txt_excl.setPlainText("\n".join(FORNITORI_SERVIZIO_DEFAULT))
+        btn_reset_excl.clicked.connect(_reset_excl_list)
+        excl_layout.addWidget(btn_reset_excl)
+
+        layout.addWidget(excl_group)
+
         layout.addStretch()
         self.stack.addWidget(page)
 
@@ -1994,15 +2102,16 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Errore Database", f"Impossibile collegarsi al database:\n{e}")
 
     def filter_table(self, key, text):
-        idx_map = {"clienti": 1, "fornitori": 2, "articoli": 3, "fatture": 4}
-        table = self.get_table_widget(idx_map[key])
+        idx_map = {"clienti": 1, "fornitori": 2, "articoli": 3, "fatture": 4, "fatture_fornitori": 5}
+        table = self.get_table_widget(idx_map.get(key))
         if not table: return
-        
+
         # Advanced Filter Values
         p_min = -1.0
         p_max = 9999999.0
         d_start = QDate(1900, 1, 1)
         d_end = QDate(2100, 1, 1)
+        escludi_servizi = False
 
         if key == "articoli":
             pmin_edit = self.findChild(QLineEdit, f"filter_pmin_{key}")
@@ -2018,41 +2127,93 @@ class MainWindow(QMainWindow):
             dend_edit = self.findChild(QDateEdit, f"filter_dend_{key}")
             if dstart_edit: d_start = dstart_edit.date()
             if dend_edit: d_end = dend_edit.date()
+        elif key == "fatture_fornitori":
+            dstart_edit = self.findChild(QDateEdit, "filter_dstart_fatture_fornitori")
+            dend_edit   = self.findChild(QDateEdit, "filter_dend_fatture_fornitori")
+            if dstart_edit: d_start = dstart_edit.date()
+            if dend_edit:   d_end   = dend_edit.date()
+            btn_escludi = self.findChild(QPushButton, "btn_escludi_servizi_ff")
+            escludi_servizi = btn_escludi.isChecked() if btn_escludi else False
+
+        # Lista esclusione: usa prefs o default
+        prefs = load_column_prefs()
+        lista_esclusione = [x.upper() for x in prefs.get("lista_esclusione_servizi", FORNITORI_SERVIZIO_DEFAULT)]
+
+        totale_completo = 0.0
+        count_completo = 0
+        totale_visibile = 0.0
+        count_visibile = 0
 
         for i in range(table.rowCount()):
             # Text Search Match
-            text_match = False if text else True
+            text_match = not text
             for j in range(table.columnCount()):
                 if not table.isColumnHidden(j):
                     item = table.item(i, j)
                     if item and text.lower() in item.text().lower():
-                        if not text or text.lower() in item.text().lower():
-                            text_match = True
-                            break
-            
+                        text_match = True
+                        break
+
             # Advanced Matches
             adv_match = True
             if key == "articoli":
-                # Price is in col 2 (0-indexed)
                 item_price = table.item(i, 2)
                 if item_price:
-                    # SortableItem stores raw value in UserRole+1
                     price = item_price.data(Qt.UserRole + 1)
                     if price is not None:
                         if price < p_min or price > p_max:
                             adv_match = False
             elif key == "fatture":
-                # Date is in col 2
                 item_date = table.item(i, 2)
                 if item_date:
                     date_val = item_date.data(Qt.UserRole + 1)
                     if date_val:
-                        # date_val is a datetime.date object
                         qdate = QDate(date_val.year, date_val.month, date_val.day)
                         if qdate < d_start or qdate > d_end:
                             adv_match = False
+            elif key == "fatture_fornitori":
+                # Date filter (col 2)
+                item_date = table.item(i, 2)
+                if item_date:
+                    date_val = item_date.data(Qt.UserRole + 1)
+                    if date_val:
+                        qdate = QDate(date_val.year, date_val.month, date_val.day)
+                        if qdate < d_start or qdate > d_end:
+                            adv_match = False
+                # Esclusione servizi (col 4 = Fornitore)
+                servizio_match = False
+                if escludi_servizi and adv_match:
+                    item_forn = table.item(i, 4)
+                    if item_forn:
+                        nome_forn = item_forn.text().upper()
+                        servizio_match = any(s in nome_forn for s in lista_esclusione)
+
+                # Accumula totali (col 6 = Totale)
+                item_totale = table.item(i, 6)
+                riga_totale = 0.0
+                if item_totale:
+                    raw = item_totale.data(Qt.UserRole + 1)
+                    riga_totale = raw if raw is not None else 0.0
+                count_completo += 1
+                totale_completo += riga_totale
+
+                visible = text_match and adv_match and not servizio_match
+                table.setRowHidden(i, not visible)
+                if visible:
+                    count_visibile += 1
+                    totale_visibile += riga_totale
+                continue
 
             table.setRowHidden(i, not (text_match and adv_match))
+
+        # Aggiorna barra totali fatture_fornitori
+        if key == "fatture_fornitori":
+            lbl_vis = self.findChild(QLabel, "lbl_totals_visible_ff")
+            lbl_comp = self.findChild(QLabel, "lbl_totals_complete_ff")
+            if lbl_vis:
+                lbl_vis.setText(f"Visibili: {count_visibile} fatture — € {totale_visibile:,.2f}")
+            if lbl_comp:
+                lbl_comp.setText(f"Vista completa: {count_completo} fatture — € {totale_completo:,.2f}")
 
     def run_import(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "Seleziona File Excel", "", "Excel Files (*.xlsx *.xls)")

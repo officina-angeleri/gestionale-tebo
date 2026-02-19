@@ -304,5 +304,17 @@ gestionale-tebo/
 - **Soluzione**: creato `migrate_db.py` — script di migrazione che legge automaticamente il percorso DB da `column_prefs.json` ed esegue `ALTER TABLE fatture ADD COLUMN` per le colonne mancanti.
 - Migrazione eseguita con successo su entrambi i DB (locale e NAS).
 
+### Session 18 — 19 Febbraio 2026
+**Obiettivo**: Implementazione Filtro Avanzato Esclusione Servizi in Fatture Fornitori.
+- **`database.py`**: aggiunto campo `categoria` (default `'CORE'`) al modello `Fornitore` per distinguere fornitori core da servizi/utenze/GDO.
+- **`migrate_db.py`**: refactoring completo — ora supporta più tabelle con una funzione `migrate_table()`. Aggiunta migrazione per `fornitori.categoria`.
+- **`main.py`**:
+  - **Costante `FORNITORI_SERVIZIO_DEFAULT`**: lista predefinita di fornitori da escludere (TIM, ENEL, ENI, A2A, GDO, telecom, ecc.).
+  - **GUI Fatture Fornitori**: aggiunti filtri data (Dal/Al) e toggle **"⚡ Escludi Servizi"** (checkable, stato persistito in `column_prefs.json`).
+  - **Barra totali**: sotto la top-bar mostra in tempo reale *"Visibili: N fatture — € X.XX"* e *"Vista completa: N fatture — € X.XX"* per verifica coerenza con l'importazione massiva.
+  - **`filter_table`**: esteso per `fatture_fornitori` — filtra per data, testo, e logica esclusione per nome fornitore (confronto parziale, case-insensitive). Aggiorna le label dei totali ad ogni applicazione del filtro.
+  - **Impostazioni**: aggiunta sezione "Filtro Esclusione Servizi" con editor testuale della lista (un nome per riga), pulsante Salva e pulsante Ripristina Predefiniti.
+- Migrazione DB eseguita su NAS (`//angeleri_new/TEBO/tebo.db`).
+
 ---
 *Aggiornato progressivamente durante lo sviluppo.*

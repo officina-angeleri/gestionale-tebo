@@ -71,6 +71,8 @@ class Fornitore(Base):
     porto = Column(String)
     spedizione = Column(String)
     email = Column(String)
+    categoria = Column(String, default='CORE')  # 'CORE' = fornitore attività | 'SERVIZIO' = utenze/GDO/telecom
+
 
 class Articolo(Base):
     __tablename__ = 'articoli'
