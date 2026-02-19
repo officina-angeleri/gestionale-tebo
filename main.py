@@ -304,8 +304,8 @@ class CrossReferenceDialog(QDialog):
             if child.widget():
                 child.widget().deleteLater()
 
-        LABEL_SS = "color: #80cbc4; font-weight: bold; font-size: 13px;"
-        VALUE_SS = "color: #f0f0f0; font-size: 13px;"
+        LABEL_SS = "color: #007c91; font-weight: bold; font-size: 13px;"
+        VALUE_SS   = "color: #212121; font-size: 13px;"
 
         if articolo:
             # Articolo trovato — mostra in sola lettura con contrasto elevato
@@ -1239,8 +1239,8 @@ class ArticleDetailDialog(QDialog):
         tab_dati = QWidget()
         dati_layout = QVBoxLayout(tab_dati)
 
-        LABEL_SS = "color: #e0e0e0; font-size: 13px;"
-        KEY_SS   = "color: #80cbc4; font-weight: bold; font-size: 13px;"
+        LABEL_SS = "color: #212121; font-size: 13px;"
+        KEY_SS   = "color: #00695c; font-weight: bold; font-size: 13px;"
 
         gen_group = QGroupBox("Dati Generali")
         gen_group.setStyleSheet("QGroupBox { color: #aaa; font-weight: bold; border: 1px solid #444; padding: 8px; }")
