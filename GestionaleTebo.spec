@@ -12,7 +12,6 @@ a = Analysis(
     ],
     hiddenimports=[
         'sqlalchemy.dialects.sqlite',
-        'cryptography',
     ],
     hookspath=[],
     hooksconfig={},
