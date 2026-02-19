@@ -295,6 +295,8 @@ class CrossReferenceDialog(QDialog):
         self.lbl_vend_summary.setText(
             f"Totale righe vendita: {len(righe)} — Qtà totale: {tot_q:.2f} — Valore totale: € {tot_val:.2f}")
 
+    _UM_OPTIONS = ["", "nr", "mt", "kg", "lt", "conf"]
+
     def _populate_anagrafica(self, articolo):
         # Svuota layout
         while self.ana_layout.count():
@@ -302,46 +304,70 @@ class CrossReferenceDialog(QDialog):
             if child.widget():
                 child.widget().deleteLater()
 
+        LABEL_SS = "color: #80cbc4; font-weight: bold; font-size: 13px;"
+        VALUE_SS = "color: #f0f0f0; font-size: 13px;"
+
         if articolo:
-            form = QFormLayout()
+            # Articolo trovato — mostra in sola lettura con contrasto elevato
+            grp = QGroupBox("Articolo trovato in anagrafica")
+            grp.setStyleSheet(
+                "QGroupBox { color: #80cbc4; font-weight: bold; border: 1px solid #37474f;"
+                " padding: 10px; margin-top: 8px; }"
+                "QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 4px; }")
+            form = QFormLayout(grp)
+            form.setSpacing(10)
             for label, value in [
-                ("Codice:", articolo.codice or "-"),
-                ("Descrizione:", articolo.descrizione or "-"),
-                ("UM:", articolo.um or "-"),
-                ("Prezzo listino:", f"€ {articolo.prezzo:.4f}" if articolo.prezzo else "-"),
-                ("Peso lordo:", f"{articolo.peso_lordo} kg" if articolo.peso_lordo else "-"),
-                ("Peso netto:", f"{articolo.peso_netto} kg" if articolo.peso_netto else "-"),
+                ("Codice:",        articolo.codice or "—"),
+                ("Descrizione:",   articolo.descrizione or "—"),
+                ("UM:",            articolo.um or "—"),
+                ("Prezzo listino:", f"€ {articolo.prezzo:.4f}" if articolo.prezzo else "—"),
+                ("Peso lordo:",    f"{articolo.peso_lordo} kg" if articolo.peso_lordo else "—"),
+                ("Peso netto:",    f"{articolo.peso_netto} kg" if articolo.peso_netto else "—"),
             ]:
-                lbl = QLabel(value)
-                lbl.setStyleSheet("color: #e0e0e0;")
-                form.addRow(QLabel(f"<b>{label}</b>"), lbl)
-            self.ana_layout.addLayout(form)
+                k = QLabel(label);  k.setStyleSheet(LABEL_SS)
+                v = QLabel(value);  v.setStyleSheet(VALUE_SS)
+                form.addRow(k, v)
+            self.ana_layout.addWidget(grp)
             self.ana_layout.addStretch()
         else:
-            # Articolo non presente
+            # Articolo non presente — form di creazione con campi editabili
             warn = QLabel(f"⚠  Codice <b>{self.codice}</b> non trovato nell'anagrafica Articoli.")
             warn.setStyleSheet("color: #ffb74d; font-size: 13px; margin: 10px;")
             warn.setTextFormat(Qt.RichText)
             self.ana_layout.addWidget(warn)
 
-            # Form di creazione rapida
             grp = QGroupBox("Crea in Anagrafica")
-            grp.setStyleSheet("QGroupBox { font-weight: bold; color: #aaa; }")
+            grp.setStyleSheet(
+                "QGroupBox { color: #aaa; font-weight: bold; border: 1px solid #444;"
+                " padding: 10px; margin-top: 8px; }"
+                "QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 4px; }")
             form = QFormLayout(grp)
+            form.setSpacing(8)
 
             self._ed_codice = QLineEdit(self.codice)
             self._ed_descr  = QLineEdit(self.descrizione)
-            self._ed_um     = QLineEdit("")
             pu = self.riga_data.get('prezzo_unitario', 0.0) or 0.0
             self._ed_prezzo = QLineEdit(f"{pu:.4f}")
 
-            for lbl, widget in [
+            # UM obbligatorio — dropdown
+            self._cb_um = QComboBox()
+            self._cb_um.addItems(self._UM_OPTIONS)
+            self._cb_um.setStyleSheet(
+                "QComboBox { background: #263238; color: #e0e0e0; padding: 2px 6px; }"
+                "QComboBox::drop-down { border: none; }")
+
+            for lbl_txt, widget in [
                 ("Codice:", self._ed_codice),
                 ("Descrizione:", self._ed_descr),
-                ("UM:", self._ed_um),
+                ("UM *:", self._cb_um),
                 ("Prezzo:", self._ed_prezzo),
             ]:
-                form.addRow(QLabel(lbl), widget)
+                lk = QLabel(lbl_txt); lk.setStyleSheet(LABEL_SS)
+                form.addRow(lk, widget)
+
+            note = QLabel("* Campo obbligatorio")
+            note.setStyleSheet("color: #ef9a9a; font-size: 11px; margin-top: 2px;")
+            form.addRow("", note)
 
             btn_crea = QPushButton("➕ Crea in Anagrafica")
             btn_crea.setStyleSheet(
@@ -356,15 +382,19 @@ class CrossReferenceDialog(QDialog):
     def _create_article(self):
         if not self.main_win: return
         codice = self._ed_codice.text().strip()
+        um     = self._cb_um.currentText().strip()
         if not codice:
-            from PySide6.QtWidgets import QMessageBox
             QMessageBox.warning(self, "Errore", "Il codice articolo è obbligatorio.")
+            return
+        if not um:
+            QMessageBox.warning(self, "UM obbligatorio",
+                "Seleziona l'Unità di Misura prima di salvare l'articolo.")
+            self._cb_um.setFocus()
             return
         session = self.main_win.db_manager.get_session()
         try:
             existing = session.query(Articolo).filter_by(codice=codice).first()
             if existing:
-                from PySide6.QtWidgets import QMessageBox
                 QMessageBox.warning(self, "Già presente",
                     f"Il codice '{codice}' esiste già in anagrafica.")
                 return
@@ -375,20 +405,17 @@ class CrossReferenceDialog(QDialog):
             art = Articolo(
                 codice=codice,
                 descrizione=self._ed_descr.text().strip(),
-                um=self._ed_um.text().strip(),
+                um=um,
                 prezzo=prezzo,
             )
             session.add(art)
             session.commit()
-            from PySide6.QtWidgets import QMessageBox
             QMessageBox.information(self, "Creato",
-                f"Articolo '{codice}' creato in anagrafica.")
-            # Ricarica il tab con i nuovi dati
+                f"Articolo '{codice}' ({um}) creato in anagrafica.")
             self._populate_anagrafica(art)
             self.tabs.setTabText(2, "📦 Anagrafica")
         except Exception as e:
             session.rollback()
-            from PySide6.QtWidgets import QMessageBox
             QMessageBox.critical(self, "Errore", str(e))
         finally:
             session.close()
@@ -1181,47 +1208,160 @@ class SupplierDetailDialog(QDialog):
 
 
 class ArticleDetailDialog(QDialog):
-    """Dialog to show all details of an article."""
+    """Dialog a 3 tab per la scheda articolo: dati, storico acquisti, storico vendite."""
+
+    _UM_OPTIONS = ["", "nr", "mt", "kg", "lt", "conf"]
+
     def __init__(self, articolo, parent=None):
         super().__init__(parent)
-        self.setWindowTitle(f"Dettagli Articolo: {articolo.codice}")
-        self.resize(600, 400)
         self.articolo = articolo
+        self.main_win = parent
+        while self.main_win and not hasattr(self.main_win, 'db_manager'):
+            self.main_win = self.main_win.parent()
+        self.setWindowTitle(f"Articolo: {articolo.codice}")
+        self.resize(820, 540)
         self.setup_ui()
+        self.load_storico()
 
     def setup_ui(self):
         layout = QVBoxLayout(self)
-        
-        form_frame = QFrame()
-        form_frame.setFrameShape(QFrame.StyledPanel)
-        form_layout = QVBoxLayout(form_frame)
-        
-        # General Data Group
+
+        # Intestazione
+        hdr = QLabel(f"<b>{self.articolo.codice}</b>  —  {self.articolo.descrizione or ''}")
+        hdr.setStyleSheet("font-size: 15px; color: #00bcd4; margin: 6px;")
+        hdr.setTextFormat(Qt.RichText)
+        layout.addWidget(hdr)
+
+        self.tabs = QTabWidget()
+        layout.addWidget(self.tabs)
+
+        # ── Tab Dati Articolo ──
+        tab_dati = QWidget()
+        dati_layout = QVBoxLayout(tab_dati)
+
+        LABEL_SS = "color: #e0e0e0; font-size: 13px;"
+        KEY_SS   = "color: #80cbc4; font-weight: bold; font-size: 13px;"
+
         gen_group = QGroupBox("Dati Generali")
+        gen_group.setStyleSheet("QGroupBox { color: #aaa; font-weight: bold; border: 1px solid #444; padding: 8px; }")
         gen_layout = QFormLayout(gen_group)
-        gen_layout.addRow("Codice:", QLabel(self.articolo.codice))
-        gen_layout.addRow("Descrizione:", QLabel(self.articolo.descrizione))
-        gen_layout.addRow("Unità di Misura:", QLabel(self.articolo.um))
-        gen_layout.addRow("Prezzo:", QLabel(f"€ {self.articolo.prezzo:.2f}"))
-        form_layout.addWidget(gen_group)
-        
-        # Logistics Group
+        gen_layout.setSpacing(8)
+
+        def _lbl(text):
+            l = QLabel(text or "—")
+            l.setStyleSheet(LABEL_SS)
+            return l
+        def _key(text):
+            l = QLabel(text)
+            l.setStyleSheet(KEY_SS)
+            return l
+
+        gen_layout.addRow(_key("Codice:"),       _lbl(self.articolo.codice))
+        gen_layout.addRow(_key("Descrizione:"),  _lbl(self.articolo.descrizione))
+        gen_layout.addRow(_key("UM:"),           _lbl(self.articolo.um))
+        prezzo_str = f"€ {self.articolo.prezzo:.4f}" if self.articolo.prezzo else "—"
+        gen_layout.addRow(_key("Prezzo listino:"), _lbl(prezzo_str))
+        dati_layout.addWidget(gen_group)
+
         log_group = QGroupBox("Logistica e Pesi")
+        log_group.setStyleSheet("QGroupBox { color: #aaa; font-weight: bold; border: 1px solid #444; padding: 8px; }")
         log_layout = QFormLayout(log_group)
-        log_layout.addRow("Peso Lordo (kg):", QLabel(str(self.articolo.peso_lordo or "")))
-        log_layout.addRow("Peso Netto (kg):", QLabel(str(self.articolo.peso_netto or "")))
-        form_layout.addWidget(log_group)
-        
-        layout.addWidget(form_frame)
-        
-        # Close Button
+        log_layout.setSpacing(8)
+        log_layout.addRow(_key("Peso Lordo (kg):"), _lbl(str(self.articolo.peso_lordo) if self.articolo.peso_lordo else "—"))
+        log_layout.addRow(_key("Peso Netto (kg):"), _lbl(str(self.articolo.peso_netto) if self.articolo.peso_netto else "—"))
+        dati_layout.addWidget(log_group)
+        dati_layout.addStretch()
+        self.tabs.addTab(tab_dati, "📋 Dati")
+
+        # ── Tab Storico Acquisti ──
+        tab_acq = QWidget()
+        acq_lay = QVBoxLayout(tab_acq)
+        self.tbl_acq = QTableWidget()
+        self.tbl_acq.setColumnCount(5)
+        self.tbl_acq.setHorizontalHeaderLabels(["Data", "Fornitore", "N° Fatt.", "Qtà", "Prezzo Acq."])
+        self.tbl_acq.horizontalHeader().setStretchLastSection(True)
+        self.tbl_acq.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.tbl_acq.setSelectionBehavior(QTableWidget.SelectRows)
+        self.tbl_acq.setSortingEnabled(True)
+        acq_lay.addWidget(self.tbl_acq)
+        self.lbl_acq = QLabel()
+        self.lbl_acq.setStyleSheet("color: #aaa; font-size: 12px;")
+        acq_lay.addWidget(self.lbl_acq)
+        self.tabs.addTab(tab_acq, "🛒 Acquisti")
+
+        # ── Tab Storico Vendite ──
+        tab_vend = QWidget()
+        vend_lay = QVBoxLayout(tab_vend)
+        self.tbl_vend = QTableWidget()
+        self.tbl_vend.setColumnCount(5)
+        self.tbl_vend.setHorizontalHeaderLabels(["Data", "Cliente", "N° Fatt.", "Qtà", "Prezzo Vend."])
+        self.tbl_vend.horizontalHeader().setStretchLastSection(True)
+        self.tbl_vend.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.tbl_vend.setSelectionBehavior(QTableWidget.SelectRows)
+        self.tbl_vend.setSortingEnabled(True)
+        vend_lay.addWidget(self.tbl_vend)
+        self.lbl_vend = QLabel()
+        self.lbl_vend.setStyleSheet("color: #aaa; font-size: 12px;")
+        vend_lay.addWidget(self.lbl_vend)
+        self.tabs.addTab(tab_vend, "💰 Vendite")
+
+        # Chiudi
         btn_close = QPushButton("Chiudi")
         btn_close.clicked.connect(self.accept)
-        layout.addWidget(btn_close)
+        btn_close.setFixedHeight(30)
+        btn_close.setStyleSheet("background-color: #444; color: #ccc; padding: 0 20px; border-radius: 4px;")
+        layout.addWidget(btn_close, alignment=Qt.AlignRight)
+
+    def load_storico(self):
+        if not self.main_win: return
+        codice = self.articolo.codice
+        session = self.main_win.db_manager.get_session()
+        try:
+            from sqlalchemy.orm import joinedload
+            acquisti = (session.query(RigaFattura)
+                .join(Fattura)
+                .filter(Fattura.tipo == 'ACQUISTO', RigaFattura.articolo_codice == codice)
+                .options(joinedload(RigaFattura.fattura))
+                .order_by(Fattura.data.desc()).all())
+            vendite  = (session.query(RigaFattura)
+                .join(Fattura)
+                .filter(Fattura.tipo == 'VENDITA',  RigaFattura.articolo_codice == codice)
+                .options(joinedload(RigaFattura.fattura))
+                .order_by(Fattura.data.desc()).all())
+
+            self._fill_table(self.tbl_acq, acquisti, tipo='acq')
+            self._fill_table(self.tbl_vend, vendite,  tipo='vend')
+
+            tot_acq  = sum((r.totale_riga or 0) for r in acquisti)
+            tot_vend = sum((r.totale_riga or 0) for r in vendite)
+            self.lbl_acq.setText(f"Totale: {len(acquisti)} righe — € {tot_acq:.2f}")
+            self.lbl_vend.setText(f"Totale: {len(vendite)} righe — € {tot_vend:.2f}")
+
+            self.tabs.setTabText(1, f"🛒 Acquisti ({len(acquisti)})")
+            self.tabs.setTabText(2, f"💰 Vendite ({len(vendite)})")
+        except Exception as e:
+            print(f"Errore storico articolo: {e}")
+        finally:
+            session.close()
+
+    def _fill_table(self, tbl, righe, tipo):
+        tbl.setRowCount(len(righe))
+        for i, r in enumerate(righe):
+            ft = r.fattura
+            tbl.setItem(i, 0, QTableWidgetItem(str(ft.data) if ft.data else "—"))
+            entity = (ft.fornitore_denominazione or ft.fornitore_codice) if tipo == 'acq' else (ft.cliente_denominazione or ft.cliente_codice)
+            tbl.setItem(i, 1, QTableWidgetItem(entity or "—"))
+            tbl.setItem(i, 2, QTableWidgetItem(str(ft.numero) if ft.numero else "—"))
+            tbl.setItem(i, 3, QTableWidgetItem(f"{r.quantita:.2f}" if r.quantita else "0.00"))
+            tbl.setItem(i, 4, QTableWidgetItem(f"€ {r.prezzo_unitario:.4f}" if r.prezzo_unitario else "€ 0.00"))
 
     def closeEvent(self, event):
-        if self.parent():
-            self.parent().remove_detail_window(f"articolo_{self.articolo.id}")
+        if hasattr(self, 'window_id'):
+            main_win = self.parent()
+            while main_win and not hasattr(main_win, 'remove_detail_window'):
+                main_win = main_win.parent()
+            if main_win:
+                main_win.remove_detail_window(self.window_id)
         super().closeEvent(event)
 
 
