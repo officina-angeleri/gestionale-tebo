@@ -281,6 +281,28 @@ gestionale-tebo/
 - [ ] Aggiungere vista dettaglio per singolo Articolo
 - [ ] Aggiungere **filtri avanzati** (data, cliente, importo)
 - [x] Documentazione strutturata dello sviluppo (`storia_sviluppo.md`)
+- [x] Implementare backend **Fatture Fornitori** (parser SDI, import batch)
+- [ ] Implementare GUI **Fatture Fornitori** (scheda sidebar, tabella, dialogo dettaglio)
+
+---
+
+### Session 16 — 18 Febbraio 2026
+**Obiettivo**: Analisi fatture fornitori e backend Fatture Acquisto.
+- **Analisi file SDI**: esaminate 2 fatture elettroniche SDI (formato FPR12, firmate CAdES `.p7m`) di UTENSILERLA MONZESE s.r.l. Tutti i campi richiesti presenti (numero, data, fornitore, righe con codice/descrizione/qtà/prezzo/IVA/sconti).
+- **Schema DB**: aggiornato `Fattura` con campi `tipo` (VENDITA/ACQUISTO), `fornitore_codice`, `fornitore_denominazione`.
+- **Backend SDI** in `data_manager.py`:
+  - `extract_xml_from_p7m()` — estrazione payload XML da CAdES con fallback multipli
+  - `parse_fattura_xml()` — parsing XML SDI con auto-rilevamento encoding e regex fallback
+  - `import_fattura_acquisto_sdi()` — import singola fattura, gestione duplicati, auto-creazione fornitore
+  - `batch_import_from_folders()` — scansione ricorsiva cartelle, deduplicazione `.xml > .p7m`, progress callback
+- **Cartella test**: aggiunta `test_batch_sdi/` con sottocartelle `sub1/` (`.p7m`) e `sub2/` (`.xml` + `.p7m`) per test import batch.
+- **Push** su GitHub (`officina-angeleri/gestionale-tebo`).
+
+### Session 17 — 19 Febbraio 2026
+**Obiettivo**: Fix migrazione database — colonne mancanti.
+- **Problema**: l'app usava il DB sul NAS (`//angeleri_new/TEBO/tebo.db`). Le nuove colonne (`tipo`, `fornitore_codice`, `fornitore_denominazione`) erano presenti nel modello SQLAlchemy ma non nel DB fisico → errore `no such column: fatture.tipo`.
+- **Soluzione**: creato `migrate_db.py` — script di migrazione che legge automaticamente il percorso DB da `column_prefs.json` ed esegue `ALTER TABLE fatture ADD COLUMN` per le colonne mancanti.
+- Migrazione eseguita con successo su entrambi i DB (locale e NAS).
 
 ---
 *Aggiornato progressivamente durante lo sviluppo.*
