@@ -1,12 +1,19 @@
 # -*- mode: python ; coding: utf-8 -*-
 
-
 a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[('gui', 'gui'), ('docs', 'docs'), ('ANGELERI_LOGO_DEFINITIVO.png', '.'), ('Logo-tebo.png', '.')],
-    hiddenimports=[],
+    datas=[
+        ('gui', 'gui'),
+        ('docs', 'docs'),
+        ('ANGELERI_LOGO_DEFINITIVO.png', '.'),
+        ('Logo-tebo.png', '.'),
+    ],
+    hiddenimports=[
+        'sqlalchemy.dialects.sqlite',
+        'cryptography',
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -21,7 +28,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name='AnalisiFatture',
+    name='GestionaleTebo',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -32,6 +39,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon=None,
 )
 coll = COLLECT(
     exe,
@@ -40,5 +48,5 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name='AnalisiFatture',
+    name='GestionaleTebo',
 )

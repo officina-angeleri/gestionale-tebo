@@ -1,7 +1,7 @@
 # Gestionale Tebo — Storia dello Sviluppo
 
 > Documento centrale di tracciamento per il progetto **Gestionale Tebo**.
-> Aggiornato: 14 Febbraio 2026
+> Aggiornato: 19 Febbraio 2026 — **Versione 1.0**
 
 ---
 
@@ -318,3 +318,71 @@ gestionale-tebo/
 
 ---
 *Aggiornato progressivamente durante lo sviluppo.*
+
+---
+
+## 🏁 Rilascio Versione 1.0 — 19 Febbraio 2026
+
+### Funzionalità incluse nella v1.0
+
+| Sezione | Funzionalità |
+|---|---|
+| **Dashboard** | Statistiche riassuntive (clienti, fornitori, articoli, fatture) |
+| **Clienti** | Tabella con ricerca full-text, ordinamento colonne, visibilità colonne configurabile, dettaglio cliente |
+| **Fornitori** | Tabella con ricerca, dettaglio fornitore, campo `categoria` (CORE/SERVIZIO) |
+| **Articoli** | Tabella con filtro prezzo min/max, ricerca, dettaglio articolo |
+| **Fatture Clienti** | Tabella con filtro data, ricerca articolo, dettaglio fattura con righe, apertura PDF |
+| **Fatture Fornitori** | Import SDI (`.p7m`/`.xml`), import batch da cartella, filtri data, **toggle "Escludi Servizi"**, barra totali visibili/completi, dettaglio fattura |
+| **Impostazioni** | Percorso DB configurabile (locale/NAS), import Excel, lista esclusione servizi configurabile |
+| **Generali** | Wildcard search (`%`), ordinamento cronologico date, preferenze colonne e ordine persistiti per sessione |
+
+### Struttura progetto al rilascio v1.0
+
+```
+gestionale-tebo/
+├── main.py                  # GUI principale (2400+ righe)
+├── database.py              # Modelli SQLAlchemy (v1.0 schema)
+├── data_manager.py          # Import Excel + SDI, parsing fatture elettroniche
+├── migrate_db.py            # Migrazione DB incrementale (multi-tabella)
+├── init_db.py               # Inizializzazione schema DB
+├── GestionaleTebo.spec      # Build PyInstaller
+├── requirements.txt         # Dipendenze Python
+├── column_prefs.json        # Preferenze utente (runtime, non versionato)
+├── docs/
+│   └── storia_sviluppo.md   # Questo file
+├── gui/                     # Moduli GUI legacy (non usati)
+├── test_batch_sdi/          # File SDI di test (sub1/, sub2/)
+└── *.xls / *.png            # Asset e dati sorgente (non versionati)
+```
+
+### Schema DB v1.0
+
+| Tabella | Colonne chiave | Note |
+|---|---|---|
+| `clienti` | id, codice, ragione_sociale, … (25 campi) | Import da Excel CLIENTI |
+| `fornitori` | id, codice, ragione_sociale, **categoria**, … | `categoria`: CORE/SERVIZIO |
+| `articoli` | id, codice, descrizione, prezzo, um, peso | Import da Excel ARTICOLI |
+| `fatture` | id, **tipo**, numero, data, cliente/fornitore, totale, causale | tipo: VENDITA/ACQUISTO |
+| `righe_fattura` | id, fattura_id, articolo_codice, descrizione, quantita, prezzo | FK → fatture, articoli |
+
+### Build exe
+
+```bash
+# Installa dipendenze
+pip install -r requirements.txt pyinstaller
+
+# Compila
+pyinstaller GestionaleTebo.spec
+
+# Output: dist/GestionaleTebo/GestionaleTebo.exe
+```
+
+### Tag git
+
+```bash
+git tag -a v1.0 -m "Gestionale Tebo versione 1.0"
+git push origin v1.0
+```
+
+---
+*Aggiornato: 19 Febbraio 2026 — versione 1.0 stabile.*

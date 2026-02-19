@@ -133,5 +133,16 @@
     100,
     100,
     120
+  ],
+  "escludi_servizi_ff": true,
+  "visible_fatture_fornitori": [
+    "ID",
+    "Numero",
+    "Data",
+    "Codice Forn.",
+    "Fornitore",
+    "Causale",
+    "Totale",
+    "Azioni"
   ]
 }
