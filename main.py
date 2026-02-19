@@ -3,7 +3,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QTableWidgetItem, QHeaderView, QLineEdit, QFrame, 
                              QMessageBox, QStackedWidget, QGridLayout, QComboBox,
                              QFormLayout, QGroupBox, QStatusBar, QDialog, QFileDialog,
-                             QDateEdit, QCheckBox)
+                             QDateEdit, QCheckBox, QTabWidget, QTextEdit)
 from PySide6.QtCore import Qt, QSize, QDate, QUrl
 from PySide6.QtGui import QFont, QAction, QColor, QPixmap, QIcon, QDesktopServices
 from database import DatabaseManager, Cliente, Fornitore, Articolo, Fattura, RigaFattura
