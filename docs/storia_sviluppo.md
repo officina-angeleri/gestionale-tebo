@@ -400,3 +400,13 @@ git push origin v1.0
   - **Tab 📦 Anagrafica**: dati tecnici articolo (codice, descrizione, UM, prezzo listino, pesi). Se l'articolo **non esiste** in anagrafica → form "Crea in Anagrafica" pre-popolato con i dati della riga fattura corrente.
 - **Modifica `InvoiceDetailDialog`**: aggiunta 7ª colonna `🔍` nella tabella righe. Pulsante disabilitato per righe senza `articolo_codice`.
 - Nessuna modifica al DB — usa `RigaFattura.articolo_codice` come chiave di ricerca.
+- **Fix**: aggiunto `QTabWidget` e `QTextEdit` agli import `PySide6.QtWidgets` (mancavano).
+
+### Session 20 — 19 Febbraio 2026
+**Feature**: Miglioramento Scheda Articolo, UdM obbligatorio, Cross-Reference inverso.
+- **`ArticleDetailDialog`** riscritta con layout a 3 tab:
+  - **📋 Dati**: codice, descrizione, UM, prezzo listino, pesi — etichette teal scuro, valori quasi-neri, alta leggibilità.
+  - **🛒 Acquisti (n)**: tutte le righe di fatture fornitore con quel codice — Data, Fornitore, N° Fatt., Qtà, Prezzo. Totale righe e valore in footer.
+  - **💰 Vendite (n)**: tutte le righe di fatture cliente — Data, Cliente, N° Fatt., Qtà, Prezzo.
+- **`CrossReferenceDialog` — Tab Anagrafica**: contrasto elevato (testo scuro su sfondo chiaro); campi Codice/Descrizione/Prezzo editabili anche se articolo trovato; **UdM (`QComboBox`)** obbligatoria con opzioni predefinite `nr / mt / kg / lt / conf` — salvataggio bloccato se vuota.
+- **Fix colori**: corretti `VALUE_SS` e `KEY_SS` da colori chiari (`#e0e0e0`, `#80cbc4`) a scuri (`#212121`, `#00695c`) per garantire leggibilità su sfondo di sistema bianco.
