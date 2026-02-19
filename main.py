@@ -1393,16 +1393,24 @@ class MainWindow(QMainWindow):
         
         # Header
         top_bar = QHBoxLayout()
-        display_name = "Fatture Clienti" if type_key == "fatture" else type_key.capitalize()
+        display_name_map = {
+            "fatture": "Fatture Clienti",
+            "fatture_fornitori": "Fatture Fornitori",
+        }
+        display_name = display_name_map.get(type_key, type_key.capitalize())
         title = QLabel(display_name)
         title.setStyleSheet("font-size: 20px; font-weight: bold; color: #00bcd4; margin-right: 15px;")
+        title.setMinimumWidth(160)
         top_bar.addWidget(title)
-        
+
         search = QLineEdit()
-        search.setPlaceholderText(f"Cerca...")
+        search.setPlaceholderText("Cerca...")
         search.textChanged.connect(lambda t, k=type_key: self.filter_table(k, t))
         search.setObjectName(f"search_{type_key}")
+        if type_key == "fatture_fornitori":
+            search.setMinimumWidth(160)
         top_bar.addWidget(search)
+        top_bar.setStretchFactor(search, 2)  # La search prende il doppio dello spazio libero
 
         # Advanced Filters
         if type_key == "articoli":
@@ -1457,120 +1465,125 @@ class MainWindow(QMainWindow):
             top_bar.addWidget(btn_search_art)
 
         elif type_key == "fatture_fornitori":
-            # Date filters
-            top_bar.addWidget(QLabel("Dal:"))
-            d_start_ff = QDateEdit()
-            d_start_ff.setCalendarPopup(True)
-            d_start_ff.setDate(QDate(2020, 1, 1))
-            d_start_ff.setObjectName("filter_dstart_fatture_fornitori")
-            d_start_ff.dateChanged.connect(lambda d: self.filter_table("fatture_fornitori", self.findChild(QLineEdit, "search_fatture_fornitori").text() if self.findChild(QLineEdit, "search_fatture_fornitori") else ""))
-            top_bar.addWidget(d_start_ff)
+            pass  # filtri e pulsanti vanno nell'action_bar (riga 2)
 
-            top_bar.addWidget(QLabel("Al:"))
-            d_end_ff = QDateEdit()
-            d_end_ff.setCalendarPopup(True)
-            d_end_ff.setDate(QDate.currentDate())
-            d_end_ff.setObjectName("filter_dend_fatture_fornitori")
-            d_end_ff.dateChanged.connect(lambda d: self.filter_table("fatture_fornitori", self.findChild(QLineEdit, "search_fatture_fornitori").text() if self.findChild(QLineEdit, "search_fatture_fornitori") else ""))
-            top_bar.addWidget(d_end_ff)
-
-            # Toggle "Escludi Servizi"
-            btn_escludi = QPushButton("⚡ Escludi Servizi")
-            btn_escludi.setCheckable(True)
-            btn_escludi.setObjectName("btn_escludi_servizi_ff")
-            btn_escludi.setCursor(Qt.PointingHandCursor)
-            btn_escludi.setFixedHeight(30)
-            btn_escludi.setStyleSheet("""
-                QPushButton {
-                    background-color: #555;
-                    color: #ccc;
-                    font-weight: bold;
-                    padding: 0 12px;
-                    border-radius: 4px;
-                    border: 1px solid #666;
-                }
-                QPushButton:checked {
-                    background-color: #f57c00;
-                    color: white;
-                    border: 1px solid #e65100;
-                }
-                QPushButton:hover { background-color: #777; }
-            """)
-            # Restore toggle state from prefs
-            _prefs_ff = load_column_prefs()
-            btn_escludi.setChecked(_prefs_ff.get("escludi_servizi_ff", False))
-            btn_escludi.toggled.connect(lambda checked: (
-                save_column_prefs({**load_column_prefs(), "escludi_servizi_ff": checked}),
-                self.filter_table("fatture_fornitori", self.findChild(QLineEdit, "search_fatture_fornitori").text() if self.findChild(QLineEdit, "search_fatture_fornitori") else "")
-            ))
-            top_bar.addWidget(btn_escludi)
-
-            # SDI Import Button
-            btn_import_sdi = QPushButton("⬇ Carica SDI (.p7m)")
-            btn_import_sdi.setCursor(Qt.PointingHandCursor)
-            btn_import_sdi.setStyleSheet("""
-                QPushButton {
-                    background-color: #ffb74d;
-                    color: black;
-                    font-weight: bold;
-                    padding: 0 15px;
-                    border-radius: 4px;
-                }
-                QPushButton:hover {
-                    background-color: #ffa726;
-                }
-            """)
-            btn_import_sdi.setFixedHeight(30)
-            btn_import_sdi.clicked.connect(self.import_sdi_files)
-            top_bar.addWidget(btn_import_sdi)
-
-            # SDI Folder Import Button
-            btn_import_folder_sdi = QPushButton("📂 Importa Cartella SDI")
-            btn_import_folder_sdi.setCursor(Qt.PointingHandCursor)
-            btn_import_folder_sdi.setStyleSheet("""
-                QPushButton {
-                    background-color: #ffcc80;
-                    color: black;
-                    font-weight: bold;
-                    padding: 0 15px;
-                    border-radius: 4px;
-                }
-                QPushButton:hover {
-                    background-color: #ffb74d;
-                }
-            """)
-            btn_import_folder_sdi.setFixedHeight(30)
-            btn_import_folder_sdi.clicked.connect(self.import_sdi_folder)
-            top_bar.addWidget(btn_import_folder_sdi)
-
-            # Clear Invoices Button
-            btn_clear_invoices = QPushButton("🗑 Svuota Fatture")
-            btn_clear_invoices.setCursor(Qt.PointingHandCursor)
-            btn_clear_invoices.setStyleSheet("""
-                QPushButton {
-                    background-color: #ef5350;
-                    color: white;
-                    font-weight: bold;
-                    padding: 0 15px;
-                    border-radius: 4px;
-                }
-                QPushButton:hover {
-                    background-color: #e53935;
-                }
-            """)
-            btn_clear_invoices.setFixedHeight(30)
-            btn_clear_invoices.clicked.connect(self.clear_all_fatture_acquisto)
-            top_bar.addWidget(btn_clear_invoices)
-
-        # Column config button
+        # Column config button (riga 1, sempre)
         btn_config = QPushButton("⚙")
         btn_config.setFixedSize(36, 36)
         btn_config.setStyleSheet("font-size: 18px; padding: 0;")
         btn_config.setToolTip("Configura colonne visibili")
         btn_config.clicked.connect(lambda checked, k=type_key: self.open_column_config(k))
         top_bar.addWidget(btn_config)
-        
+
         layout.addLayout(top_bar)
+
+        # ── RIGA 2: filtri + toggle + pulsanti azione (solo fatture_fornitori) ──
+        if type_key == "fatture_fornitori":
+            action_bar = QHBoxLayout()
+            action_bar.setSpacing(8)
+
+            # Filtri data
+            lbl_dal = QLabel("Dal:")
+            lbl_dal.setStyleSheet("color: #ccc;")
+            action_bar.addWidget(lbl_dal)
+            d_start_ff = QDateEdit()
+            d_start_ff.setCalendarPopup(True)
+            d_start_ff.setDate(QDate(2020, 1, 1))
+            d_start_ff.setObjectName("filter_dstart_fatture_fornitori")
+            d_start_ff.setFixedHeight(28)
+            d_start_ff.dateChanged.connect(lambda d: self.filter_table(
+                "fatture_fornitori",
+                self.findChild(QLineEdit, "search_fatture_fornitori").text()
+                if self.findChild(QLineEdit, "search_fatture_fornitori") else ""))
+            action_bar.addWidget(d_start_ff)
+
+            lbl_al = QLabel("Al:")
+            lbl_al.setStyleSheet("color: #ccc;")
+            action_bar.addWidget(lbl_al)
+            d_end_ff = QDateEdit()
+            d_end_ff.setCalendarPopup(True)
+            d_end_ff.setDate(QDate.currentDate())
+            d_end_ff.setObjectName("filter_dend_fatture_fornitori")
+            d_end_ff.setFixedHeight(28)
+            d_end_ff.dateChanged.connect(lambda d: self.filter_table(
+                "fatture_fornitori",
+                self.findChild(QLineEdit, "search_fatture_fornitori").text()
+                if self.findChild(QLineEdit, "search_fatture_fornitori") else ""))
+            action_bar.addWidget(d_end_ff)
+
+            # Toggle Escludi Servizi
+            btn_escludi = QPushButton("⚡ Escludi Servizi")
+            btn_escludi.setCheckable(True)
+            btn_escludi.setObjectName("btn_escludi_servizi_ff")
+            btn_escludi.setCursor(Qt.PointingHandCursor)
+            btn_escludi.setFixedHeight(28)
+            btn_escludi.setStyleSheet("""
+                QPushButton {
+                    background-color: #3a3a3a;
+                    color: #aaa;
+                    font-weight: bold;
+                    padding: 0 16px;
+                    border-radius: 4px;
+                    border: 1px solid #555;
+                }
+                QPushButton:checked {
+                    background-color: #f57c00;
+                    color: white;
+                    border: 1px solid #e65100;
+                }
+                QPushButton:hover:!checked { background-color: #505050; }
+            """)
+            _prefs_ff = load_column_prefs()
+            btn_escludi.setChecked(_prefs_ff.get("escludi_servizi_ff", False))
+            btn_escludi.toggled.connect(lambda checked: (
+                save_column_prefs({**load_column_prefs(), "escludi_servizi_ff": checked}),
+                self.filter_table(
+                    "fatture_fornitori",
+                    self.findChild(QLineEdit, "search_fatture_fornitori").text()
+                    if self.findChild(QLineEdit, "search_fatture_fornitori") else "")
+            ))
+            action_bar.addWidget(btn_escludi)
+
+            action_bar.addStretch()
+
+            # Helper per pulsanti azione
+            def _make_btn(label, tooltip, bg, hover, fg="black"):
+                b = QPushButton(label)
+                b.setCursor(Qt.PointingHandCursor)
+                b.setToolTip(tooltip)
+                b.setFixedHeight(28)
+                b.setStyleSheet(f"""
+                    QPushButton {{
+                        background-color: {bg};
+                        color: {fg};
+                        font-weight: bold;
+                        padding: 0 16px;
+                        border-radius: 4px;
+                    }}
+                    QPushButton:hover {{ background-color: {hover}; }}
+                """)
+                return b
+
+            btn_import_sdi = _make_btn(
+                "⬇ Carica SDI", "Carica singoli file SDI (.p7m / .xml)",
+                "#ffb74d", "#ffa726")
+            btn_import_sdi.clicked.connect(self.import_sdi_files)
+            action_bar.addWidget(btn_import_sdi)
+
+            btn_import_folder = _make_btn(
+                "📂 Importa Cartella", "Importa ricorsivamente una cartella SDI",
+                "#ffcc80", "#ffb74d")
+            btn_import_folder.clicked.connect(self.import_sdi_folder)
+            action_bar.addWidget(btn_import_folder)
+
+            btn_clear = _make_btn(
+                "🗑 Svuota Fatture", "Elimina tutte le fatture fornitori dal database",
+                "#ef5350", "#e53935", "white")
+            btn_clear.clicked.connect(self.clear_all_fatture_acquisto)
+            action_bar.addWidget(btn_clear)
+
+            layout.addLayout(action_bar)
+
 
         # Barra totali (solo per fatture_fornitori)
         if type_key == "fatture_fornitori":
