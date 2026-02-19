@@ -142,9 +142,261 @@ def make_item(display_text, raw_value=None, user_role_data=None):
     return item
 
 
+class CrossReferenceDialog(QDialog):
+    """Ricerca incrociata di un articolo tra fatture acquisto, vendita e anagrafica."""
+
+    def __init__(self, codice, descrizione, riga_data=None, parent=None):
+        super().__init__(parent)
+        self.codice = codice or ""
+        self.descrizione = descrizione or ""
+        self.riga_data = riga_data or {}  # {'prezzo_unitario': ..., 'quantita': ..., 'totale_riga': ...}
+
+        # Risali a MainWindow per accedere al db_manager
+        self.main_win = parent
+        while self.main_win and not hasattr(self.main_win, 'db_manager'):
+            self.main_win = self.main_win.parent()
+
+        self.setWindowTitle(f"Cross-Reference: {self.codice} — {self.descrizione[:60]}")
+        self.resize(900, 560)
+        self.setup_ui()
+        self.load_data()
+
+    def setup_ui(self):
+        layout = QVBoxLayout(self)
+
+        # Intestazione
+        hdr = QLabel(f"🔍  <b>{self.codice}</b>  —  {self.descrizione}")
+        hdr.setStyleSheet("font-size: 15px; color: #00bcd4; margin: 6px;")
+        hdr.setTextFormat(Qt.RichText)
+        layout.addWidget(hdr)
+
+        # Tab widget
+        self.tabs = QTabWidget()
+        layout.addWidget(self.tabs)
+
+        # ── Tab Acquisti ──
+        self.tab_acq = QWidget()
+        acq_layout = QVBoxLayout(self.tab_acq)
+        self.tbl_acq = QTableWidget()
+        self.tbl_acq.setColumnCount(6)
+        self.tbl_acq.setHorizontalHeaderLabels(["Data", "Fornitore", "N° Fatt.", "Qtà", "Prezzo Acq.", "Tot. Riga"])
+        self.tbl_acq.horizontalHeader().setStretchLastSection(True)
+        self.tbl_acq.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.tbl_acq.setSelectionBehavior(QTableWidget.SelectRows)
+        self.tbl_acq.setSortingEnabled(True)
+        acq_layout.addWidget(self.tbl_acq)
+        self.lbl_acq_summary = QLabel()
+        self.lbl_acq_summary.setStyleSheet("color: #aaa; font-size: 12px; margin: 4px;")
+        acq_layout.addWidget(self.lbl_acq_summary)
+        self.tabs.addTab(self.tab_acq, "🛒 Acquisti")
+
+        # ── Tab Vendite ──
+        self.tab_vend = QWidget()
+        vend_layout = QVBoxLayout(self.tab_vend)
+        self.tbl_vend = QTableWidget()
+        self.tbl_vend.setColumnCount(6)
+        self.tbl_vend.setHorizontalHeaderLabels(["Data", "Cliente", "N° Fatt.", "Qtà", "Prezzo Vend.", "Tot. Riga"])
+        self.tbl_vend.horizontalHeader().setStretchLastSection(True)
+        self.tbl_vend.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.tbl_vend.setSelectionBehavior(QTableWidget.SelectRows)
+        self.tbl_vend.setSortingEnabled(True)
+        vend_layout.addWidget(self.tbl_vend)
+        self.lbl_vend_summary = QLabel()
+        self.lbl_vend_summary.setStyleSheet("color: #aaa; font-size: 12px; margin: 4px;")
+        vend_layout.addWidget(self.lbl_vend_summary)
+        self.tabs.addTab(self.tab_vend, "💰 Vendite")
+
+        # ── Tab Anagrafica ──
+        self.tab_ana = QWidget()
+        self.ana_layout = QVBoxLayout(self.tab_ana)
+        self.tabs.addTab(self.tab_ana, "📦 Anagrafica")
+
+        # Chiudi
+        btn_close = QPushButton("✖ Chiudi")
+        btn_close.clicked.connect(self.close)
+        btn_close.setFixedHeight(32)
+        btn_close.setStyleSheet("background-color: #444; color: #ccc; padding: 0 20px; border-radius: 4px;")
+        layout.addWidget(btn_close, alignment=Qt.AlignRight)
+
+    def load_data(self):
+        if not self.main_win: return
+        session = self.main_win.db_manager.get_session()
+        try:
+            # Query acquisti
+            acquisti = (session.query(RigaFattura)
+                .join(Fattura)
+                .filter(Fattura.tipo == 'ACQUISTO',
+                        RigaFattura.articolo_codice == self.codice)
+                .options(joinedload(RigaFattura.fattura))
+                .order_by(Fattura.data.desc())
+                .all())
+
+            # Query vendite
+            vendite = (session.query(RigaFattura)
+                .join(Fattura)
+                .filter(Fattura.tipo == 'VENDITA',
+                        RigaFattura.articolo_codice == self.codice)
+                .options(joinedload(RigaFattura.fattura))
+                .order_by(Fattura.data.desc())
+                .all())
+
+            # Anagrafica
+            articolo = session.query(Articolo).filter_by(codice=self.codice).first()
+
+            self._populate_acquisti(acquisti)
+            self._populate_vendite(vendite)
+            self._populate_anagrafica(articolo)
+
+            # Aggiorna titoli tab con conteggi
+            self.tabs.setTabText(0, f"🛒 Acquisti ({len(acquisti)})")
+            self.tabs.setTabText(1, f"💰 Vendite ({len(vendite)})")
+            self.tabs.setTabText(2, "📦 Anagrafica" if articolo else "📦 Anagrafica ⚠")
+        except Exception as e:
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.critical(self, "Errore", str(e))
+        finally:
+            session.close()
+
+    def _populate_acquisti(self, righe):
+        self.tbl_acq.setRowCount(len(righe))
+        tot_q, tot_val = 0.0, 0.0
+        for i, r in enumerate(righe):
+            ft = r.fattura
+            self.tbl_acq.setItem(i, 0, QTableWidgetItem(str(ft.data) if ft.data else "-"))
+            self.tbl_acq.setItem(i, 1, QTableWidgetItem(ft.fornitore_denominazione or ft.fornitore_codice or "-"))
+            self.tbl_acq.setItem(i, 2, QTableWidgetItem(str(ft.numero) if ft.numero else "-"))
+            q = r.quantita or 0.0
+            pu = r.prezzo_unitario or 0.0
+            tr = r.totale_riga or 0.0
+            self.tbl_acq.setItem(i, 3, QTableWidgetItem(f"{q:.2f}"))
+            self.tbl_acq.setItem(i, 4, QTableWidgetItem(f"€ {pu:.4f}"))
+            self.tbl_acq.setItem(i, 5, QTableWidgetItem(f"€ {tr:.2f}"))
+            tot_q += q
+            tot_val += tr
+        self.lbl_acq_summary.setText(
+            f"Totale righe acquisto: {len(righe)} — Qtà totale: {tot_q:.2f} — Valore totale: € {tot_val:.2f}")
+
+    def _populate_vendite(self, righe):
+        self.tbl_vend.setRowCount(len(righe))
+        tot_q, tot_val = 0.0, 0.0
+        for i, r in enumerate(righe):
+            ft = r.fattura
+            self.tbl_vend.setItem(i, 0, QTableWidgetItem(str(ft.data) if ft.data else "-"))
+            self.tbl_vend.setItem(i, 1, QTableWidgetItem(ft.cliente_denominazione or ft.cliente_codice or "-"))
+            self.tbl_vend.setItem(i, 2, QTableWidgetItem(str(ft.numero) if ft.numero else "-"))
+            q = r.quantita or 0.0
+            pu = r.prezzo_unitario or 0.0
+            tr = r.totale_riga or 0.0
+            self.tbl_vend.setItem(i, 3, QTableWidgetItem(f"{q:.2f}"))
+            self.tbl_vend.setItem(i, 4, QTableWidgetItem(f"€ {pu:.4f}"))
+            self.tbl_vend.setItem(i, 5, QTableWidgetItem(f"€ {tr:.2f}"))
+            tot_q += q
+            tot_val += tr
+        self.lbl_vend_summary.setText(
+            f"Totale righe vendita: {len(righe)} — Qtà totale: {tot_q:.2f} — Valore totale: € {tot_val:.2f}")
+
+    def _populate_anagrafica(self, articolo):
+        # Svuota layout
+        while self.ana_layout.count():
+            child = self.ana_layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+
+        if articolo:
+            form = QFormLayout()
+            for label, value in [
+                ("Codice:", articolo.codice or "-"),
+                ("Descrizione:", articolo.descrizione or "-"),
+                ("UM:", articolo.um or "-"),
+                ("Prezzo listino:", f"€ {articolo.prezzo:.4f}" if articolo.prezzo else "-"),
+                ("Peso lordo:", f"{articolo.peso_lordo} kg" if articolo.peso_lordo else "-"),
+                ("Peso netto:", f"{articolo.peso_netto} kg" if articolo.peso_netto else "-"),
+            ]:
+                lbl = QLabel(value)
+                lbl.setStyleSheet("color: #e0e0e0;")
+                form.addRow(QLabel(f"<b>{label}</b>"), lbl)
+            self.ana_layout.addLayout(form)
+            self.ana_layout.addStretch()
+        else:
+            # Articolo non presente
+            warn = QLabel(f"⚠  Codice <b>{self.codice}</b> non trovato nell'anagrafica Articoli.")
+            warn.setStyleSheet("color: #ffb74d; font-size: 13px; margin: 10px;")
+            warn.setTextFormat(Qt.RichText)
+            self.ana_layout.addWidget(warn)
+
+            # Form di creazione rapida
+            grp = QGroupBox("Crea in Anagrafica")
+            grp.setStyleSheet("QGroupBox { font-weight: bold; color: #aaa; }")
+            form = QFormLayout(grp)
+
+            self._ed_codice = QLineEdit(self.codice)
+            self._ed_descr  = QLineEdit(self.descrizione)
+            self._ed_um     = QLineEdit("")
+            pu = self.riga_data.get('prezzo_unitario', 0.0) or 0.0
+            self._ed_prezzo = QLineEdit(f"{pu:.4f}")
+
+            for lbl, widget in [
+                ("Codice:", self._ed_codice),
+                ("Descrizione:", self._ed_descr),
+                ("UM:", self._ed_um),
+                ("Prezzo:", self._ed_prezzo),
+            ]:
+                form.addRow(QLabel(lbl), widget)
+
+            btn_crea = QPushButton("➕ Crea in Anagrafica")
+            btn_crea.setStyleSheet(
+                "background-color: #388e3c; color: white; font-weight: bold; "
+                "height: 34px; border-radius: 4px;")
+            btn_crea.clicked.connect(self._create_article)
+            form.addRow("", btn_crea)
+
+            self.ana_layout.addWidget(grp)
+            self.ana_layout.addStretch()
+
+    def _create_article(self):
+        if not self.main_win: return
+        codice = self._ed_codice.text().strip()
+        if not codice:
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "Errore", "Il codice articolo è obbligatorio.")
+            return
+        session = self.main_win.db_manager.get_session()
+        try:
+            existing = session.query(Articolo).filter_by(codice=codice).first()
+            if existing:
+                from PySide6.QtWidgets import QMessageBox
+                QMessageBox.warning(self, "Già presente",
+                    f"Il codice '{codice}' esiste già in anagrafica.")
+                return
+            try:
+                prezzo = float(self._ed_prezzo.text().replace(',', '.'))
+            except ValueError:
+                prezzo = 0.0
+            art = Articolo(
+                codice=codice,
+                descrizione=self._ed_descr.text().strip(),
+                um=self._ed_um.text().strip(),
+                prezzo=prezzo,
+            )
+            session.add(art)
+            session.commit()
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.information(self, "Creato",
+                f"Articolo '{codice}' creato in anagrafica.")
+            # Ricarica il tab con i nuovi dati
+            self._populate_anagrafica(art)
+            self.tabs.setTabText(2, "📦 Anagrafica")
+        except Exception as e:
+            session.rollback()
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.critical(self, "Errore", str(e))
+        finally:
+            session.close()
+
+
 class InvoiceDetailDialog(QDialog):
     """Summary dialog for an invoice."""
-    DETAIL_HEADERS = ["UM", "Codice", "Descrizione", "Quantità", "Prezzo Unit.", "Totale Riga"]
+    DETAIL_HEADERS = ["UM", "Codice", "Descrizione", "Quantità", "Prezzo Unit.", "Totale Riga", "🔍"]
     PREFS_KEY = "invoice_detail_widths"
 
     def __init__(self, fattura_or_id, parent=None):
@@ -269,8 +521,9 @@ class InvoiceDetailDialog(QDialog):
         if not self.fattura: return
         righe = self.fattura.righe
         self.table.setRowCount(len(righe))
+        self.table.setSortingEnabled(False)  # disabilita durante il riempimento (necessario per setCellWidget)
         for i, r in enumerate(righe):
-            # Get UM safely from the related Articolo, if it exists
+            # UM
             um_val = ""
             if r.articolo and r.articolo.um:
                 um_val = r.articolo.um
@@ -281,6 +534,32 @@ class InvoiceDetailDialog(QDialog):
             self.table.setItem(i, 4, QTableWidgetItem(f"€ {r.prezzo_unitario:.2f}" if r.prezzo_unitario else "€ 0.00"))
             self.table.setItem(i, 5, QTableWidgetItem(f"€ {r.totale_riga:.2f}" if r.totale_riga else "€ 0.00"))
 
+            # Pulsante cross-reference
+            btn_xref = QPushButton("🔍")
+            btn_xref.setFixedSize(28, 24)
+            btn_xref.setStyleSheet(
+                "QPushButton { background-color: #37474f; color: #80cbc4; border-radius: 3px; font-size: 11px; }"
+                "QPushButton:hover { background-color: #00bcd4; color: white; }"
+                "QPushButton:disabled { color: #555; background-color: #2a2a2a; }")
+            btn_xref.setToolTip(f"Cross-reference: {r.articolo_codice or 'nessun codice'}" )
+            if r.articolo_codice:
+                riga_data = {
+                    'prezzo_unitario': r.prezzo_unitario,
+                    'quantita': r.quantita,
+                    'totale_riga': r.totale_riga,
+                }
+                codice_snap = r.articolo_codice
+                descr_snap  = r.descrizione or ""
+                btn_xref.clicked.connect(
+                    lambda checked=False, cod=codice_snap, des=descr_snap, rd=riga_data:
+                    CrossReferenceDialog(cod, des, rd, self).exec()
+                )
+            else:
+                btn_xref.setEnabled(False)
+            self.table.setCellWidget(i, 6, btn_xref)
+
+        self.table.setSortingEnabled(True)
+
     def _restore_column_widths(self):
         """Restore saved column widths from preferences."""
         prefs = load_column_prefs()
@@ -289,8 +568,8 @@ class InvoiceDetailDialog(QDialog):
             for i, w in enumerate(widths):
                 self.table.setColumnWidth(i, w)
         else:
-            # Default reasonable widths
-            defaults = [60, 120, 250, 80, 100, 100]
+            # Default widths: UM, Codice, Descrizione, Qtà, Prezzo, Totale, 🔍
+            defaults = [50, 120, 260, 70, 100, 90, 36]
             for i, w in enumerate(defaults[:self.table.columnCount()]):
                 self.table.setColumnWidth(i, w)
 

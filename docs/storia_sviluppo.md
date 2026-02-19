@@ -386,3 +386,17 @@ git push origin v1.0
 
 ---
 *Aggiornato: 19 Febbraio 2026 — versione 1.0 stabile.*
+
+---
+
+## 🚀 Versione 2.0 — Sviluppi Post-1.0
+
+### Session 19 — 19 Febbraio 2026
+**Feature**: Cross-Reference Articoli tra Fatture e Anagrafica.
+- **Nuova classe `CrossReferenceDialog`** in `main.py`:
+  - Aperta dal pulsante `🔍` in ogni riga del dettaglio fattura (sia Clienti che Fornitori).
+  - **Tab 🛒 Acquisti**: tutte le righe di fatture fornitore con quel codice articolo — Data, Fornitore, N° Fatt., Qtà, Prezzo Acquisto, Tot. Riga. Sommario quantità e valore totale.
+  - **Tab 💰 Vendite**: tutte le righe di fatture cliente con quel codice — Data, Cliente, N° Fatt., Qtà, Prezzo Vendita, Tot. Riga. Sommario quantità e valore totale.
+  - **Tab 📦 Anagrafica**: dati tecnici articolo (codice, descrizione, UM, prezzo listino, pesi). Se l'articolo **non esiste** in anagrafica → form "Crea in Anagrafica" pre-popolato con i dati della riga fattura corrente.
+- **Modifica `InvoiceDetailDialog`**: aggiunta 7ª colonna `🔍` nella tabella righe. Pulsante disabilitato per righe senza `articolo_codice`.
+- Nessuna modifica al DB — usa `RigaFattura.articolo_codice` come chiave di ricerca.
