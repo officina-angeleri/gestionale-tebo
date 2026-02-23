@@ -87,3 +87,22 @@
     - [x] Add "Ricerca incrementale" checkbox and mode label <!-- id: 89 -->
     - [x] Implement search history state `active_search_steps` <!-- id: 90 -->
     - [x] Update `perform_search` to rebuild query from history <!-- id: 91 -->
+- [x] Import PDF Robecchi — Sessione 21 <!-- id: 92 -->
+    - [x] Analisi 51 PDF: identificati leggibili (23) vs scansioni (26) e offerte (2) <!-- id: 93 -->
+    - [x] Installazione dipendenza `pdfplumber` <!-- id: 94 -->
+    - [x] Implementare `import_pdf_robecchi()` in `data_manager.py` <!-- id: 95 -->
+    - [x] Implementare `_import_single_pdf_robecchi()` con parser FATTURA e OC <!-- id: 96 -->
+    - [x] Implementare `_extract_rows_pdf_robecchi()` con regex e fuzzy matching DB <!-- id: 97 -->
+    - [x] Implementare `_parse_robecchi_date()` per date DD-MM-YY / DD-MM-YYYY <!-- id: 98 -->
+    - [x] Implementare `_parse_italian_float()` per numeri formato italiano (1.067,50) <!-- id: 99 -->
+    - [x] Aggiungere deduplicazione e auto-creazione fornitore ROBECCHI <!-- id: 100 -->
+    - [x] UI: pulsante `📄 Sincronizza PDF Robecchi` in Impostazioni con progress dialog <!-- id: 101 -->
+    - [x] UI: salvare ultima cartella usata in `column_prefs.json` <!-- id: 102 -->
+    - [x] Migrazione DB: `ALTER TABLE fornitori ADD COLUMN categoria VARCHAR` <!-- id: 103 -->
+    - [x] Test backend: 22 importati, 70 righe, 29 saltati, 0 errori <!-- id: 104 -->
+- [x] Fix Totali PDF Robecchi = 0 — Sessione 22 <!-- id: 105 -->
+    - [x] Diagnosticare bug: `_parse_float` su `1.067,50` → `0.0` <!-- id: 106 -->
+    - [x] Fix regex totale OC per `\r\n` Windows <!-- id: 107 -->
+    - [x] Aggiungere fallback totale = somma righe se regex fallisce <!-- id: 108 -->
+    - [x] Re-import e verifica: tutti i totali corretti <!-- id: 109 -->
+    - [x] Git push e aggiornamento `storia_sviluppo.md` <!-- id: 110 -->
