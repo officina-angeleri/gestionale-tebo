@@ -2244,37 +2244,45 @@ class MainWindow(QMainWindow):
         # Data Management section
         import_group = QGroupBox("Manutenzione Dati")
         import_layout = QVBoxLayout(import_group)
-        import_layout.addWidget(QLabel("ATTENZIONE: L'importazione sovrascrive i dati esistenti."))
-        
-        btn_import = QPushButton("⬇ Importa Dati da Excel")
-        btn_import.setStyleSheet("background-color: #ffb74d; color: #000; font-weight: bold; text-align: center; height: 40px;")
+        warn_lbl = QLabel("ATTENZIONE: le importazioni sovrascrivono i dati esistenti.")
+        warn_lbl.setStyleSheet("color: #e65100; font-weight: bold; margin-bottom: 4px;")
+        import_layout.addWidget(warn_lbl)
+
+        _BTN_H = "min-height: 36px; padding: 4px 12px; font-weight: bold;"
+
+        btn_import = QPushButton("Importa Dati da Excel (Clienti / Fornitori / Articoli)")
+        btn_import.setStyleSheet(f"background-color: #ffb74d; color: #1a1a1a; {_BTN_H}")
         btn_import.clicked.connect(self.run_import)
         import_layout.addWidget(btn_import)
 
-        # --- Import SDI e PDF Robecchi ---
+        # --- Import SDI ---
         sdi_hl = QHBoxLayout()
+        sdi_hl.setSpacing(8)
 
-        btn_sdi_file = QPushButton("📄 Importa File SDI...")
-        btn_sdi_file.setStyleSheet("height: 35px; background-color: #37474f; color: #ccc;")
+        btn_sdi_file = QPushButton("Importa File SDI  (.xml / .p7m)")
+        btn_sdi_file.setStyleSheet(f"background-color: #455a64; color: #eceff1; {_BTN_H}")
         btn_sdi_file.clicked.connect(self.import_sdi_files)
         sdi_hl.addWidget(btn_sdi_file)
 
-        btn_sdi_folder = QPushButton("📁 Importa Cartella SDI...")
-        btn_sdi_folder.setStyleSheet("height: 35px; background-color: #37474f; color: #ccc;")
+        btn_sdi_folder = QPushButton("Importa Cartella SDI  (ricorsivo)")
+        btn_sdi_folder.setStyleSheet(f"background-color: #455a64; color: #eceff1; {_BTN_H}")
         btn_sdi_folder.clicked.connect(self.import_sdi_folder)
         sdi_hl.addWidget(btn_sdi_folder)
         import_layout.addLayout(sdi_hl)
 
-        btn_pdf_robecchi = QPushButton("📄 Sincronizza PDF Robecchi")
+        # --- Import PDF Robecchi ---
+        btn_pdf_robecchi = QPushButton("Sincronizza PDF Robecchi  (fatture e conferme d'ordine)")
         btn_pdf_robecchi.setStyleSheet(
-            "height: 38px; background-color: #1565c0; color: white; font-weight: bold; border-radius: 4px;"
+            f"background-color: #1565c0; color: white; {_BTN_H}"
         )
         btn_pdf_robecchi.setToolTip("Importa fatture e conferme d'ordine PDF da Robecchi Articoli Tecnici")
         btn_pdf_robecchi.clicked.connect(self.import_pdf_robecchi_ui)
         import_layout.addWidget(btn_pdf_robecchi)
 
-        btn_clear = QPushButton("🗑 Svuota Fatture Fornitori")
-        btn_clear.setStyleSheet("height: 35px; background-color: #b71c1c; color: white; font-weight: bold;")
+        import_layout.addSpacing(6)
+
+        btn_clear = QPushButton("Svuota tutte le Fatture Fornitori")
+        btn_clear.setStyleSheet(f"background-color: #b71c1c; color: white; {_BTN_H}")
         btn_clear.clicked.connect(self.clear_all_fatture_acquisto)
         import_layout.addWidget(btn_clear)
 
