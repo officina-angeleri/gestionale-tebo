@@ -1,7 +1,7 @@
 # Gestionale Tebo — Storia dello Sviluppo
 
 > Documento centrale di tracciamento per il progetto **Gestionale Tebo**.
-> Aggiornato: 19 Febbraio 2026 — **Versione 1.0**
+> Aggiornato: 23 Febbraio 2026 — **Versione 2.0-dev**
 
 ---
 
@@ -282,7 +282,9 @@ gestionale-tebo/
 - [ ] Aggiungere **filtri avanzati** (data, cliente, importo)
 - [x] Documentazione strutturata dello sviluppo (`storia_sviluppo.md`)
 - [x] Implementare backend **Fatture Fornitori** (parser SDI, import batch)
-- [ ] Implementare GUI **Fatture Fornitori** (scheda sidebar, tabella, dialogo dettaglio)
+- [x] Implementare GUI **Fatture Fornitori** (scheda sidebar, tabella, dialogo dettaglio)
+- [x] Fix robustezza parsing SDI (multi-livello, Base64, regex fallback)
+- [x] Funzione "Svuota Fatture Fornitori"
 
 ---
 
@@ -315,6 +317,23 @@ gestionale-tebo/
   - **`filter_table`**: esteso per `fatture_fornitori` — filtra per data, testo, e logica esclusione per nome fornitore (confronto parziale, case-insensitive). Aggiorna le label dei totali ad ogni applicazione del filtro.
   - **Impostazioni**: aggiunta sezione "Filtro Esclusione Servizi" con editor testuale della lista (un nome per riga), pulsante Salva e pulsante Ripristina Predefiniti.
 - Migrazione DB eseguita su NAS (`//angeleri_new/TEBO/tebo.db`).
+
+### Session 21 — 18 Febbraio 2026
+**Obiettivo**: Fix Robustezza Parsing SDI/P7M — Parsing Multi-Livello.
+- **Problema**: Alcuni file `.p7m` causavano errori `junk after document element` o `invalid token` durante l'import.
+- **Strategia multi-livello** in `extract_xml_from_p7m()` e `parse_fattura_xml()`:
+  - **Livello 1**: estrazione chirurgica bidirezionale (da `<?xml` a `</FatturaElettronica>`).
+  - **Livello 2 (Line-Based Fallback)**: se il parsing fallisce, lettura riga per riga con focus sulla riga contenente l'XML (es. 4ª riga).
+  - **Livello 3 (Radical Cleaner)**: pulizia di tutti i caratteri non stampabili rispettando l'integrità multi-byte UTF-8; sostituzione di byte sospetti prima del parsing.
+  - **Livello 4 (Regex Fallback — Ultima Spiaggia)**: se l'XML è strutturalmente irrecuperabile per ElementTree, estrazione di numero, data e fornitore tramite regex per salvare almeno i dati di testata.
+- **Fix righe senza codice articolo**: le `DettaglioLinee` prive di `CodiceArticolo` vengono comunque importate come righe descrittive invece di essere scartate.
+- **Support Base64**: gestione del payload XML codificato in Base64 all'interno dei file `.p7m` binari.
+
+### Session 22 — 18 Febbraio 2026
+**Obiettivo**: Funzione "Svuota Fatture Fornitori".
+- **Backend** (`data_manager.py`): aggiunto metodo `delete_all_fatture_acquisto()` che elimina in cascata tutte le `Fattura` di tipo `ACQUISTO` e le relative `RigaFattura`.
+- **GUI** (`main.py`): aggiunto pulsante "🗑 Svuota Fatture Fornitori" in Impostazioni con `QMessageBox` di conferma a doppio step.
+- **Push** su GitHub (`officina-angeleri/gestionale-tebo`, tag `v2.0-dev`).
 
 ---
 *Aggiornato progressivamente durante lo sviluppo.*
@@ -385,7 +404,7 @@ git push origin v1.0
 ```
 
 ---
-*Aggiornato: 19 Febbraio 2026 — versione 1.0 stabile.*
+*Aggiornato: 19 Febbraio 2026 — versione 1.0 stabile. Sviluppo v2.0 attivo dal 19 Febbraio 2026.*
 
 ---
 
@@ -410,3 +429,73 @@ git push origin v1.0
   - **💰 Vendite (n)**: tutte le righe di fatture cliente — Data, Cliente, N° Fatt., Qtà, Prezzo.
 - **`CrossReferenceDialog` — Tab Anagrafica**: contrasto elevato (testo scuro su sfondo chiaro); campi Codice/Descrizione/Prezzo editabili anche se articolo trovato; **UdM (`QComboBox`)** obbligatoria con opzioni predefinite `nr / mt / kg / lt / conf` — salvataggio bloccato se vuota.
 - **Fix colori**: corretti `VALUE_SS` e `KEY_SS` da colori chiari (`#e0e0e0`, `#80cbc4`) a scuri (`#212121`, `#00695c`) per garantire leggibilità su sfondo di sistema bianco.
+
+### Session 21 — 23 Febbraio 2026
+**Feature**: Import automatico PDF Robecchi (fatture e conferme d'ordine).
+
+#### Analisi PDF
+Scansionati 51 PDF in `I:\...\Robecchi`:
+- **26 scansioni** (`Robecchi Fatt...`): PDF-immagine, nessun testo → saltati con avviso
+- **21 Conferme d'Ordine** (`C001578 OC...`): testo selezionabile ✅
+- **2 Fatture testuali** (`Fattura n. XXXX...`): ✅
+- **2 Offerte** (`C001578 PV...`): leggibili ma non fatture → saltate
+
+#### Backend — `data_manager.py`
+Nuovi metodi aggiunti:
+
+| Metodo | Funzione |
+|---|---|
+| `import_pdf_robecchi(folder, cb)` | Entry point: scansione ricorsiva, ritorna `{'imported', 'rows', 'skipped', 'errors'}` |
+| `_import_single_pdf_robecchi(path, session)` | Parser: identifica tipo documento, estrae numero/data/totale con regex, crea `Fattura` + righe, controlla duplicati |
+| `_extract_rows_pdf_robecchi(text, fattura, session)` | Regex `C001578-XXXX DESCRIZIONE UM QTY PREZZO TOT`; matching esatto codice articolo DB + fuzzy fallback su descrizione (`ilike`) |
+| `_parse_robecchi_date(s)` | Converte `DD-MM-YY` o `DD-MM-YYYY` → `date` |
+| `_parse_italian_float(val)` | Converte numeri formato italiano (`1.067,50` → `1067.5`), distingue separatore migliaia da decimale |
+
+**Logica importazione per tipo documento:**
+- **FATTURA**: numero e data da TABLE 0 (celle `N° DOCUMENTO` / `DATA DOC.`), totale da regex `TOTALE FATTURA ... EUR X`
+- **OC Conferma d'ordine**: numero e data da regex `Conferma d'ordine n. XXX del DD-MM-YY`, totale da regex `€ X.XXX,XX` prima di `INSERITO DA`
+- **Fallback totale**: se totale = 0 dopo estrazione, viene calcolato come somma delle `RigaFattura.totale_riga`
+- **Deduplicazione**: skip se `Fattura` con stesso `numero` + `fornitore_codice='ROBECCHI'` + `tipo='ACQUISTO'` già presente
+- **Auto-creazione fornitore**: se `ROBECCHI` non è nel DB, viene creato con dati fissi (P.IVA, sede, email)
+
+#### Frontend — `main.py`
+- **`import_pdf_robecchi_ui()`**: handler con `QFileDialog`, `QProgressDialog` modale per-file, popup riepilogo con emoji
+- **Pulsante** `📄 Sincronizza PDF Robecchi` nella sezione **Manutenzione Dati** → Impostazioni (affianco a SDI)
+- Ultima cartella usata salvata in `column_prefs.json` (`robecchi_pdf_folder`)
+- Spostati anche i pulsanti SDI (file + cartella) dentro lo stesso gruppo
+
+#### Migrazione DB
+Il DB SQLite era privo della colonna `fornitori.categoria` (modello aggiornato ma DB non migrato):
+```sql
+ALTER TABLE fornitori ADD COLUMN categoria VARCHAR;
+```
+
+#### `requirements.txt`
+Aggiunta dipendenza: `pdfplumber`
+
+#### Risultati test
+```
+Importati: 22  fatture/conferme d'ordine
+Righe:     70  righe articolo (con codice C001578-XXXX)
+Saltati:   29  (26 scansioni + 2 offerte + 1 duplicato)
+Errori:    0
+```
+
+### Session 22 — 23 Febbraio 2026
+**Fix**: Totali fatture Robecchi mostravano € 0,00.
+
+**Causa**: `_parse_float` generico trasformava `1.067,50` (formato IT) in `1.067.50` (float non valido) → silenziosamente `0.0`.
+
+**Fix in `data_manager.py`**:
+1. Nuovo metodo `_parse_italian_float()`: se contiene sia `.` che `,` → rimuove il punto (migliaia) e converte virgola in punto decimale
+2. Regex totale OC migliorata per gestire `\r\n` (Windows) tra importo e `INSERITO DA`
+3. Fallback totale: se ancora 0 dopo estrazione regex, sommato dalle righe importate
+4. Tutti i metodi `_extract_rows_pdf_robecchi` / estrazione totale ora usano `_parse_italian_float`
+
+**Risultati dopo fix e re-import**:
+```
+n.815  → € 2.377,50  (era € 0,00)
+n.3628 → € 1.067,50  (era € 0,00)
+... tutti i totali corretti
+```
+

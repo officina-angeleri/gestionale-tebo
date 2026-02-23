@@ -2138,6 +2138,78 @@ class MainWindow(QMainWindow):
             else:
                 QMessageBox.critical(self, "Errore", msg)
 
+    def import_pdf_robecchi_ui(self):
+        """Avvia l'import PDF Robecchi con progress dialog e popup riepilogo."""
+        from PySide6.QtWidgets import QProgressDialog
+
+        # Cartella di default (ultima usata, o percorso Robecchi standard)
+        prefs = load_column_prefs()
+        default_folder = prefs.get(
+            'robecchi_pdf_folder',
+            r'I:\Il mio Drive\TEBO\02 Fornitori\Fatture Fornitori\Robecchi'
+        )
+
+        folder = QFileDialog.getExistingDirectory(
+            self, "Seleziona Cartella PDF Robecchi", default_folder
+        )
+        if not folder:
+            return
+
+        # Salva la cartella scelta per la prossima volta
+        prefs['robecchi_pdf_folder'] = folder
+        save_column_prefs(prefs)
+
+        progress = QProgressDialog("Scansione PDF...", "Annulla", 0, 100, self)
+        progress.setWindowModality(Qt.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setWindowTitle("Sincronizzazione PDF Robecchi")
+        progress.show()
+        QApplication.processEvents()
+
+        dm = DataManager(self.db_manager)
+        cancelled = [False]
+
+        def update_progress(current, total, filename):
+            if progress.wasCanceled():
+                cancelled[0] = True
+                return
+            progress.setMaximum(max(total, 1))
+            progress.setValue(current)
+            progress.setLabelText(f"Elaborazione: {filename} ({current + 1}/{total})")
+            QApplication.processEvents()
+
+        result = dm.import_pdf_robecchi(folder, progress_callback=update_progress)
+
+        progress.setValue(progress.maximum())
+        progress.close()
+
+        if result['imported'] > 0:
+            self.load_table_data('fatture_fornitori')
+            self.load_stats()
+
+        # Popup riepilogo
+        imported = result['imported']
+        rows    = result['rows']
+        skipped = result['skipped']
+        errors  = result['errors']
+
+        summary = (
+            f"✅  {imported} fatture/ordini importati\n"
+            f"📦  {rows} righe articolo caricate\n"
+            f"⏭  {skipped} file saltati (scansioni / offerte / duplicati)\n"
+            f"❌  {len(errors)} errori di lettura"
+        )
+
+        if errors:
+            err_detail = '\n'.join(f'• {n}: {m}' for n, m in errors[:10])
+            if len(errors) > 10:
+                err_detail += f'\n... e altri {len(errors) - 10} errori.'
+            summary += f'\n\nDettaglio errori:\n{err_detail}'
+            QMessageBox.warning(self, "Processo completato", summary)
+        else:
+            QMessageBox.information(self, "Processo completato", summary)
+
+
     def setup_settings_view(self):
         page = QWidget()
         layout = QVBoxLayout(page)
@@ -2178,7 +2250,34 @@ class MainWindow(QMainWindow):
         btn_import.setStyleSheet("background-color: #ffb74d; color: #000; font-weight: bold; text-align: center; height: 40px;")
         btn_import.clicked.connect(self.run_import)
         import_layout.addWidget(btn_import)
-        
+
+        # --- Import SDI e PDF Robecchi ---
+        sdi_hl = QHBoxLayout()
+
+        btn_sdi_file = QPushButton("📄 Importa File SDI...")
+        btn_sdi_file.setStyleSheet("height: 35px; background-color: #37474f; color: #ccc;")
+        btn_sdi_file.clicked.connect(self.import_sdi_files)
+        sdi_hl.addWidget(btn_sdi_file)
+
+        btn_sdi_folder = QPushButton("📁 Importa Cartella SDI...")
+        btn_sdi_folder.setStyleSheet("height: 35px; background-color: #37474f; color: #ccc;")
+        btn_sdi_folder.clicked.connect(self.import_sdi_folder)
+        sdi_hl.addWidget(btn_sdi_folder)
+        import_layout.addLayout(sdi_hl)
+
+        btn_pdf_robecchi = QPushButton("📄 Sincronizza PDF Robecchi")
+        btn_pdf_robecchi.setStyleSheet(
+            "height: 38px; background-color: #1565c0; color: white; font-weight: bold; border-radius: 4px;"
+        )
+        btn_pdf_robecchi.setToolTip("Importa fatture e conferme d'ordine PDF da Robecchi Articoli Tecnici")
+        btn_pdf_robecchi.clicked.connect(self.import_pdf_robecchi_ui)
+        import_layout.addWidget(btn_pdf_robecchi)
+
+        btn_clear = QPushButton("🗑 Svuota Fatture Fornitori")
+        btn_clear.setStyleSheet("height: 35px; background-color: #b71c1c; color: white; font-weight: bold;")
+        btn_clear.clicked.connect(self.clear_all_fatture_acquisto)
+        import_layout.addWidget(btn_clear)
+
         layout.addWidget(import_group)
 
         # Lista Esclusione Servizi
