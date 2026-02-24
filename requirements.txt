@@ -2,4 +2,3 @@ pandas
 openpyxl
 SQLAlchemy
 PySide6
-pdfplumber
