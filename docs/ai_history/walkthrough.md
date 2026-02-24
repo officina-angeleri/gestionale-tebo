@@ -1,64 +1,29 @@
-# Walkthrough: Import PDF Robecchi — Sessioni 21-22
+# Walkthrough: Rollback Import PDF Robecchi — Sessione 23
 
-*Completato: 23 Febbraio 2026*
+*Completato: 24 Febbraio 2026*
 
 ---
 
 ## Obiettivo
 
-Importare automaticamente fatture e conferme d'ordine PDF del fornitore Robecchi
-nel database gestionale, con parser robusto, matching articoli e UI integrata.
+Rimuovere l'importazione automatica di fatture e conferme d'ordine PDF del fornitore Robecchi, ripristinando il sistema alla sola importazione massiva XML nativa.
 
-## Feature Implementate
+## Interventi Effettuati (Rollback)
 
-| Componente | Dettaglio |
+Il codice è stato chirurgicamente ripristinato ad uno stato precedente all'introduzione della funzionalità Robecchi PDF, mantenendo intatte le rifiniture di UI cross-reference ed estrattori SDI (aggiunte nelle sessioni 19-20).
+
+| Componente | Dettaglio Rimozione |
 |---|---|
-| **Analisi PDF** | 51 file analizzati: 23 leggibili, 26 scansioni (saltate), 2 offerte (saltate) |
-| **Parser backend** | `import_pdf_robecchi()` + 4 metodi helper in `data_manager.py` |
-| **Parsing numeri IT** | `_parse_italian_float()`: gestisce `1.067,50` → `1067.5` |
-| **Fuzzy matching** | Ricerca articolo per codice esatto, poi per descrizione (`ilike`) |
-| **Deduplicazione** | Skip automatico se fattura già presente nel DB |
-| **UI** | Pulsante `📄 Sincronizza PDF Robecchi` in Impostazioni con progress dialog |
-| **Migrazione DB** | `ALTER TABLE fornitori ADD COLUMN categoria VARCHAR` (schema desincrono) |
+| **Dipendenze** | Rimossa libreria `pdfplumber` da `requirements.txt`. |
+| **Backend** | Rimosso `import_pdf_robecchi()` e helper sanitizzati in `data_manager.py`. Eliminato override numeri italiani e ripristinato `_parse_float`. |
+| **UI** | Eliminato pulsante `📄 Sincronizza PDF Robecchi` in `main.py` e il popup riepilogativo. |
 
-## Fix Sessione 22
+## Verifica
 
-**Bug**: fatture con importo > 999 mostravano TOTALE € 0,00.
-
-**Root cause**: `_parse_float("1.067,50")` → `float("1.067.50")` → *ValueError silenzioso* → `0.0`
-
-**Fix**:
-1. Nuovo `_parse_italian_float()` con logica separatore migliaia/decimale
-2. Regex OC aggiornata per `\r\n` Windows
-3. Fallback totale: somma righe se regex fallisce
-
-## Risultati Test Finali
-
-```
-Importati: 22  fatture/conferme d'ordine
-Righe:     70  righe articolo
-Saltati:   29  (scansioni + offerte + duplicati)
-Errori:    0
-
-Top totali verificati:
-  n.815  → € 2.377,50  ✅
-  n.3628 → € 1.067,50  ✅
-  n.1647 → € 1.478,88  ✅
-```
-
-## Come usare
-
-1. Aprire l'app → **Impostazioni** → **Manutenzione Dati**
-2. Cliccare **📄 Sincronizza PDF Robecchi**
-3. Selezionare la cartella `I:\Il mio Drive\TEBO\02 Fornitori\Fatture Fornitori\Robecchi`
-4. Attendere il completamento e leggere il popup riepilogo
-
-> [!TIP]
-> Il bottone è idempotente: ri-eseguirlo salta automaticamente le fatture già presenti.
-
-> [!NOTE]
-> Le 26 fatture `Robecchi Fatt...` sono PDF-immagine non estraibili e vengono
-> sempre conteggiate come "saltate". Richiederebbero OCR per essere processate.
+- L'app si avvia regolarmente.
+- I pulsanti relativi all'**Import SDI (XML/P7M)** e lo svuotamento fatture rimangono funzionanti.
+- L'integrità del database SQLite è preservata (lo schema non era stato alterato seicentramente).
+- Compilazione eseguibile (`GestionaleTebo.exe`) generata con successo tramite `pyinstaller`.
 
 ---
 *Progetto: officina-angeleri/gestionale-tebo — branch main*

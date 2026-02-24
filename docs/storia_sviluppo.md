@@ -499,3 +499,20 @@ n.3628 → € 1.067,50  (era € 0,00)
 ... tutti i totali corretti
 ```
 
+### Session 23 — 24 Febbraio 2026 (Rollback)
+**Obiettivo**: Rollback completo della funzionalità di importazione PDF Robecchi per ripristinare unicamente l'elaborazione massiva XML.
+
+**Interventi effettuati**:
+1. **Backend (`data_manager.py`)**:
+   - Rimozione completa delle logiche introdotte per Robecchi: `import_pdf_robecchi`, `_import_single_pdf_robecchi`, `_extract_rows_pdf_robecchi`, `_parse_robecchi_date`, `_parse_italian_float` e costanti fornitore fisse.
+   - Ripristino dell'uso di `_parse_float` laddove `_parse_italian_float` era subentrato.
+
+2. **Frontend (`main.py`)**:
+   - Rimozione del pulsante `btn_pdf_robecchi` nell'interfaccia delle "Impostazioni".
+   - Rimozione del gestore UI `import_pdf_robecchi_ui`.
+
+3. **Dipendenze (`requirements.txt`)**:
+   - Rimozione della libreria `pdfplumber`.
+
+**Esito**: Il codice è stato chirurgicamente ripristinato ad uno stato precedente all'introduzione della funzionalità Robecchi PDF, mantenendo intatte le rifiniture di UI cross-reference ed estrattori SDI. Eseguita ricompilazione tramite `pyinstaller`.
+
